@@ -212,12 +212,17 @@ impl<const N: usize> Timer<N> {
         }
 
         match self.sync_mode {
-            TimerSyncMode::FreeRun | TimerSyncMode::NoSync => {
+            TimerSyncMode::FreeRun | TimerSyncMode::NoSync | TimerSyncMode::ResetTo0AtBlank => {
                 let elapsed = (clock.current_time() - self.timer_start_timestamp) as u32;
                 self.adjust_elapsed(elapsed)
             }
-            TimerSyncMode::PauseDuringBlank | TimerSyncMode::ResetTo0AtBlank => {
-                let elapsed = (clock.current_time() - self.timer_start_timestamp - self.blank_paused_cycles) as u32;
+            TimerSyncMode::PauseDuringBlank => {
+                let elapsed = if self.inside_video_blank {
+                    (self.blank_start_timestamp - self.timer_start_timestamp - self.blank_paused_cycles) as u32
+                }
+                else {
+                    (clock.current_time() - self.timer_start_timestamp - self.blank_paused_cycles) as u32
+                };
                 self.adjust_elapsed(elapsed)
             }
             TimerSyncMode::StopAtCurrentValue => {
@@ -228,7 +233,6 @@ impl<const N: usize> Timer<N> {
                 0
             }
             TimerSyncMode::PauseUntilBlankThenFreeRun => {
-                // TODO
                 0
             }
         }
@@ -240,6 +244,13 @@ impl<const N: usize> Timer<N> {
 
     pub fn write_counter(&mut self, value: u32,clock:&mut Clock) {
         info!("Writing counter #{N} = {:04X}",value);
+        match self.sync_mode {
+            TimerSyncMode::PauseUntilBlankThenFreeRun | TimerSyncMode::StopAtCurrentValue => {
+                self.counter = value as u16;
+                return;
+            }
+            _ => {}
+        }
         match self.clock_source {
             TimerClockSource::HBlank => {
                 self.counter = value as u16;
@@ -287,11 +298,15 @@ impl<const N: usize> Timer<N> {
         // When resetting the Counter by writing the Mode register, it will stay at 0000h for 2 clock cycles before counting up.
         self.video_blank_occurred_once = false;
         self.irq_one_shot_fired = false;
+        self.blank_paused_cycles = 0;
         // 10    Interrupt Request       (0=Yes, 1=No) (Set after Writing)    (W=1) (R)
         self.counter_mode |= 1 << 10;
 
+        if matches!(self.sync_mode,TimerSyncMode::PauseUntilBlankThenFreeRun) {
+            self.counter = 0; // stay at 0 until blank
+        }
         // check Timer 2
-        if !matches!(self.sync_mode,TimerSyncMode::StopAtCurrentValue) {
+        else if !matches!(self.sync_mode,TimerSyncMode::StopAtCurrentValue) {
             self.counter = 0;
             self.reschedule_timer(clock,0);
         }
@@ -332,6 +347,16 @@ impl<const N: usize> Timer<N> {
             self.counter_target
         };
         let ticks = target - self.counter;
+
+        match self.sync_mode {
+            TimerSyncMode::PauseDuringBlank => {
+                // check if the timer is starting inside blank
+                if self.inside_video_blank {
+                    self.blank_start_timestamp = clock.current_time();
+                }
+            }
+            _ => {}
+        }
 
         self.timer_start_timestamp = clock.current_time().saturating_sub(offset_cycles);
         match self.clock_source {
@@ -374,10 +399,16 @@ impl<const N: usize> Timer<N> {
                 self.blank_pending_cycles = self.timer_target_timestamp - clock.current_time();
             }
             TimerSyncMode::ResetTo0AtBlank => {
-                self.timer_start_timestamp = clock.current_time();
+                self.cancel_timer_events(clock);
+                self.counter = 0;
+                self.reschedule_timer(clock,0);
             }
             TimerSyncMode::ResetTo0AtBlankPauseOutside => {
-                self.timer_start_timestamp = clock.current_time();
+                // TODO
+            }
+            TimerSyncMode::PauseUntilBlankThenFreeRun => {
+                self.sync_mode = TimerSyncMode::FreeRun;
+                self.reschedule_timer(clock,0);
             }
             _ => {}
         }
