@@ -214,6 +214,15 @@ impl GPU {
             }
 
             let dx = (xe - xs).max(1);
+
+            let dr_dx = ((c_end.r as i32 - c_start.r as i32) << 16) / dx;
+            let dg_dx = ((c_end.g as i32 - c_start.g as i32) << 16) / dx;
+            let db_dx = ((c_end.b as i32 - c_start.b as i32) << 16) / dx;
+
+            let mut r = (c_start.r as i32) << 16;
+            let mut g = (c_start.g as i32) << 16;
+            let mut b = (c_start.b as i32) << 16;
+
             /*
             The PS1 GPU uses what is called the top-left rule.
             If a pixel lies exactly on one of the triangle’s edges, only rasterize it if it’s on a top edge or a left edge.
@@ -223,11 +232,16 @@ impl GPU {
             for x in xs..xe {
                 let i = x - xs;
                 let color = if is_gouraud {
-                    Color::new(Self::lerp_u8(c_start.r, c_end.r, i, dx),Self::lerp_u8(c_start.g, c_end.g, i, dx),Self::lerp_u8(c_start.b, c_end.b, i, dx),c_start.m | c_end.m)
+                    //Color::new(Self::lerp_u8(c_start.r, c_end.r, i, dx),Self::lerp_u8(c_start.g, c_end.g, i, dx),Self::lerp_u8(c_start.b, c_end.b, i, dx),c_start.m | c_end.m)
+                    Color::new((r >> 16).clamp(0, 255) as u8,(g >> 16).clamp(0, 255) as u8,(b >> 16).clamp(0, 255) as u8,c_start.m | c_end.m)
                 }
                 else {
                     c0
                 };
+                r += dr_dx;
+                g += dg_dx;
+                b += db_dx;
+
                 // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
                 self.draw_pixel(&Vertex { x: xs as i16 + i as i16, y }, &color, is_semi_transparent, is_gouraud || (is_textured && !is_raw_texture));
             }
@@ -240,8 +254,8 @@ impl GPU {
 
         for y in v0.y..v1.y {
             let t = (y - v0.y) as i32;
-            let x01 = ((v0.x as i32) << 16) + (((v1.x as i32 - v0.x as i32) << 16) * t) / dy01.max(1);
-            let x02 = ((v0.x as i32) << 16) + (((v2.x as i32 - v0.x as i32) << 16) * t) / dy02.max(1);
+            let x01 = ((v0.x as i32) << 16) + (((v1.x as i32 - v0.x as i32) << 16).saturating_mul(t)) / dy01.max(1);
+            let x02 = ((v0.x as i32) << 16) + (((v2.x as i32 - v0.x as i32) << 16).saturating_mul(t)) / dy02.max(1);
 
             let (c01,c02) = if is_gouraud {
                 (Color {
