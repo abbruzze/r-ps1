@@ -279,7 +279,7 @@ impl GPU {
         self.vram[offset] as u16 | (self.vram[offset + 1] as u16) << 8
     }
     #[inline]
-    fn draw_pixel_offset(&mut self, offset:usize, pixel:u16, use_mask:bool, semi_transparent:bool) {
+    pub(super) fn draw_pixel_offset(&mut self, offset:usize, pixel:u16, use_mask:bool, semi_transparent:bool) {
         let mut pixel_to_write = pixel;
         if use_mask {
             let old_pixel = self.get_pixel_15(offset);
@@ -303,156 +303,11 @@ impl GPU {
         self.vram[offset] = pixel_to_write as u8;
         self.vram[offset + 1] = (pixel_to_write >> 8) as u8;
     }
-    // Operations ====================================================================
-    fn operation_polygon_rendering(&mut self,cmd:u32) {
-        todo!("GPU polygon rendering command {:08X} not implemented yet",cmd);
-    }
-    /*
-    GPU Render Line Commands
-    When the upper 3 bits of the first GP0 command are set to 2 (010), then the command can be decoded using the following bitfield:
 
-     bit number   value   meaning
-      31-29        010    line render
-        28         1/0    gouraud / flat shading
-        27         1/0    polyline / single line
-        25         1/0    semi-transparent / opaque
-       23-0        rgb    first color value.
-    So each vertex can be seen as the following list of words:
-
-    Color      xxBBGGRR    - optional, only present for gouraud shading
-    Vertex     YYYYXXXX    - required, two signed 16 bits values
-    When polyline mode is active, at least two vertices must be sent to the GPU. The vertex list is terminated by the bits 12-15 and 28-31 equaling 0x5, or (word & 0xF000F000) == 0x50005000. The terminator value occurs on the first word of the vertex (i.e. the color word if it's a gouraud shaded).
-
-    If the 2 vertices in a line overlap, then the GPU will draw a 1x1 rectangle in the location of the 2 vertices using the colour of the first vertex.
-
-    Note
-    Lines are displayed up to \<including> their lower-right coordinates (ie. unlike as for polygons, the lower-right coordinate is not excluded).
-    If dithering is enabled (via Texpage command), then both monochrome and shaded lines are drawn with dithering (this differs from monochrome polygons and monochrome rectangles).
-
-    Wire-Frame
-    Poly-Lines can be used (among others) to create Wire-Frame polygons (by setting the last Vertex equal to Vertex 1).
-     */
-    fn operation_line_rendering(&mut self,cmd:u32) {
-        match self.gp0state {
-            Gp0State::WaitingCommandParameters(operation, None) => {
-                let is_gouraud = (cmd & (1 << 28)) != 0;
-                self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(if is_gouraud {3} else {2}));
-            }
-            Gp0State::WaitingCommandParameters(operation, Some(_)) => {
-                let cmd = self.cmd_fifo.pop().unwrap();
-                let is_polyline = (cmd & (1 << 27)) != 0;
-                let is_gouraud = (cmd & (1 << 28)) != 0;
-                let semi_transparent = ((cmd >> 25) & 1) != 0;
-                let start_color = Color::from_u32(cmd);
-
-                let mut start_vertex = Vertex::from_command_parameter(self.cmd_fifo.pop().unwrap());
-                start_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
-                let end_color = if is_gouraud {
-                    Color::from_u32(self.cmd_fifo.pop().unwrap())
-                }
-                else {
-                    start_color
-                };
-
-                let orig_end_vertex = Vertex::from_command_parameter(self.cmd_fifo.pop().unwrap());
-                let mut end_vertex = orig_end_vertex.clone();
-                end_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
-                //info!("Drawing line v1={:?}/{:?} v2={:?}{:?} shaded={is_gouraud} semi_transparent={semi_transparent}",start_vertex,start_color,end_vertex,end_color);
-                self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
-
-                if is_polyline {
-                    let arg_size : usize = if is_gouraud {2} else {1};
-                    self.gp0state = Gp0State::WaitingPolyline(operation,arg_size,orig_end_vertex,end_color,is_gouraud,semi_transparent);
-                }
-                else {
-                    self.gp0state = Gp0State::WaitingCommand;
-                }
-            }
-            Gp0State::WaitingPolyline(operation,_,start_vertex,start_color,is_gouraud,semi_transparent) => {
-                let end_color = if is_gouraud {
-                    Color::from_u32(self.cmd_fifo.pop().unwrap())
-                }
-                else {
-                    start_color
-                };
-                let orig_end_vertex = Vertex::from_command_parameter(self.cmd_fifo.pop().unwrap());
-                let mut end_vertex = orig_end_vertex.clone();
-                end_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
-                //info!("Drawing polyline v1={:?}/{:?} v2={:?}{:?} shaded={is_gouraud} semi_transparent={semi_transparent}",start_vertex,start_color,end_vertex,end_color);
-                self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
-                let arg_size : usize = if is_gouraud {2} else {1};
-                self.gp0state = Gp0State::WaitingPolyline(operation,arg_size,orig_end_vertex,end_color,is_gouraud,semi_transparent);
-            }
-            _ => {}
-        }
-    }
-    // Bresenham's line algorithm
-    fn draw_line(&mut self, start: &Vertex, end: &Vertex, start_color: &Color, end_color: &Color,shaded:bool, semi_transparent: bool) {
-        let dx = start.dx(end).abs() as i32;
-        let dy = start.dy(end).abs() as i32;
-
-        // The GPU will not render any lines or polygons where the distance between any two vertices is
-        // larger than 1023 horizontally or 511 vertically
-        if dx > 1023 || dy > 511 {
-            return;
-        }
-
-        let total_steps = dx.max(dy);
-
-        if total_steps == 0 {
-            self.draw_pixel(start,start_color,semi_transparent);
-            return;
-        }
-
-        let sx = if start.x < end.x { 1 } else { -1 };
-        let sy = if start.y < end.y { 1 } else { -1 };
-
-        let mut err = dx - dy;
-        let mut v = start.clone();
-
-        let r_step = if shaded { ((end_color.r as i32 - start_color.r as i32) << 16) / total_steps } else { 0 };
-        let g_step = if shaded { ((end_color.g as i32 - start_color.g as i32) << 16) / total_steps } else { 0 };
-        let b_step = if shaded { ((end_color.b as i32 - start_color.b as i32) << 16) / total_steps } else { 0 };
-
-        // Current rgb value in fixed-point (16.16)
-        let mut r_current = (start_color.r as i32) << 16;
-        let mut g_current = (start_color.g as i32) << 16;
-        let mut b_current = (start_color.b as i32) << 16;
-
-        loop {
-            let r = (r_current >> 16) as u8;
-            let g = (g_current >> 16) as u8;
-            let b = (b_current >> 16) as u8;
-
-            self.draw_pixel(&v, &Color::new(r,g,b,false), semi_transparent);
-
-            if v.x == end.x && v.y == end.y {
-                break;
-            }
-
-            let e2 = err << 1;
-
-            if e2 > -dy {
-                err -= dy;
-                v.x += sx;
-            }
-
-            if e2 < dx {
-                err += dx;
-                v.y += sy;
-            }
-
-            if shaded {
-                r_current += r_step;
-                g_current += g_step;
-                b_current += b_step;
-            }
-        }
-    }
     #[inline(always)]
-    fn draw_pixel(&mut self,v:&Vertex,color:&Color,semi_transparent:bool) {
+    pub(super) fn draw_pixel(&mut self,v:&Vertex,color:&Color,semi_transparent:bool,allow_dithering:bool) {
         if v.is_inside_drawing_area(&self.drawing_area) {
-            let color = if self.dithering {
+            let color = if allow_dithering && self.dithering {
                 let dither_value = DITHER_TABLE[(v.y & 3) as usize][(v.x & 3) as usize];
                 color.dither(dither_value)
             }
@@ -463,151 +318,9 @@ impl GPU {
         }
     }
 
-    /*
-    GPU Render Rectangle Commands
-    Rectangles are drawn much faster than polygons. Unlike polygons, Gouraud shading is not possible, dithering isn't applied, the rectangle must forcefully have horizontal and vertical edges, textures cannot be rotated or scaled, and, of course, the GPU does render Rectangles as a single entity, without splitting them into two triangles. Note that this is sometimes refered to as a "sprite".
 
-    The Rectangle command can be decoded using the following bitfield:
 
-     bit number   value   meaning
-      31-29        011    rectangle render
-      28-27        sss    rectangle size
-        26         1/0    textured / untextured
-        25         1/0    semi-transparent / opaque
-        24         1/0    raw texture / modulation
-       23-0        rgb    first color value.
-    The size parameter can be seen as the following enum:
-
-      0 (00)      variable size
-      1 (01)      single pixel (1x1)
-      2 (10)      8x8 sprite
-      3 (11)      16x16 sprite
-    Therefore, the whole draw call can be seen as the following sequence of words:
-
-    Color         ccBBGGRR    - command + color; color is ignored when textured
-    Vertex1       YYYYXXXX    - required, indicates the upper left corner to render
-    UV            ClutVVUU    - optional, only present for textured rectangles
-    Width+Height  YsizXsiz    - optional, dimensions for variable sized rectangles (max 1023x511)
-    Unlike for Textured-Polygons, the "Texpage" must be set up separately for Rectangles, via GP0(E1h). Width and Height can be up to 1023x511, however, the maximum size of the texture window is 256x256 (so the source data will be repeated when trying to use sizes larger than 256x256).
-
-    If using a texture with a rectangle primitive, please that the texture UV, as well as the texture width must be even. If not, there will be one pixel sampling errors in the drawn rectangle every 16 pixels.
-
-    Texture Origin and X/Y-Flip
-    Vertex & Texcoord specify the upper-left edge of the rectangle. And, normally, screen coords and texture coords are both incremented during rendering the rectangle pixels.
-    Optionally, X/Y-Flip bits can be set in Texpage.Bit12/13, these bits cause the texture coordinates to be decremented (instead of incremented). The X/Y-Flip bits do affect only Rectangles (not Polygons, nor VRAM Transfers).
-    Caution: Reportedly, the X/Y-Flip feature isn't supported on old PSX consoles (unknown which ones exactly, maybe such with PU-7 mainboards, and unknown how to detect flipping support; except of course by reading VRAM).
-     */
-    fn operation_rectangle_rendering(&mut self,cmd:u32) {
-        match self.gp0state {
-            Gp0State::WaitingCommandParameters(operation, None) => {
-                let mut expected_data = 1usize;
-                let size = (cmd >> 27) & 3;
-                let is_textured = ((cmd >> 26) & 1) != 0;
-                if is_textured {
-                    expected_data += 1;
-                }
-                if size == 0b00 {
-                    expected_data += 1;
-                }
-
-                self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(expected_data));
-            }
-            Gp0State::WaitingCommandParameters(_, Some(_)) => {
-                let cmd = self.cmd_fifo.pop().unwrap();
-                let size = (cmd >> 27) & 3;
-                let is_textured = ((cmd >> 26) & 1) != 0;
-                let semi_transparent = ((cmd >> 25) & 1) != 0;
-                let is_raw_texture = ((cmd >> 24) & 1) != 0;
-                let shading_color = Color::from_u32(cmd);
-                let mut vertex = Vertex::from_command_parameter(self.cmd_fifo.pop().unwrap());
-                let uv = if is_textured { Some(self.cmd_fifo.pop().unwrap()) } else { None };
-                let (width,height) = match size {
-                    0b00 => {
-                        let size = self.cmd_fifo.pop().unwrap();
-                        ((size & 0x3FF) as u16,(size >> 16) as u16)
-                    }
-                    0b01 => (1,1),
-                    0b10 => (8,8),
-                    0b11 => (16,16),
-                    _ => unreachable!()
-                };
-                debug!("GP0 Rectangle rendering (x,y)={:?} size={:02b} color={:?} textured_uv={:?} width={} height={} semi_transparent={} raw_texture={} x_offset={} y_offset={} texture={:?}",vertex,size,shading_color,uv,width,height,semi_transparent,is_raw_texture,self.drawing_area.x_offset,self.drawing_area.y_offset,self.texture);
-                vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
-                let origin = vertex.clone();
-                let color = shading_color.to_u16();
-                match uv {
-                    Some(uv) => { // textured
-                        let base_u = uv as u8;
-                        let base_v = (uv >> 8) as u8;
-                        // if self.texture.rectangle_x_flip {
-                        //     base_u = base_u.wrapping_add(width as u8);
-                        // }
-                        // if self.texture.rectangle_y_flip {
-                        //     base_v = base_v.wrapping_add(height as u8);
-                        // }
-                        let clut = uv >> 16;
-                        let clut_x = clut & 0x3F; // 0-5    X coordinate X/16
-                        let clut_y = (clut >> 6) & 0x1FF; // 6-14   Y coordinate 0-511
-                        for y in 0..height {
-                            let v = base_v.wrapping_add(y as u8);
-                            // let v = if self.texture.rectangle_y_flip {
-                            //     base_v.wrapping_sub(y as u8)
-                            // }
-                            // else {
-                            //     base_v.wrapping_add(y as u8)
-                            // };
-                            for x in 0..width {
-                                if vertex.is_inside_drawing_area(&self.drawing_area) {
-                                    let u = base_u.wrapping_add(x as u8);
-                                    // let u = if self.texture.rectangle_x_flip {
-                                    //     base_u.wrapping_sub(x as u8)
-                                    // }
-                                    // else {
-                                    //     base_u.wrapping_add(x as u8)
-                                    // };
-                                    let texture_pixel = self.get_texture_pixel(clut_x, clut_y, u.into(), v.into());
-
-                                    if texture_pixel != 0x0000 {
-                                        let raw_color = Color::from_u16(texture_pixel);
-                                        let color = if is_raw_texture {
-                                            raw_color
-                                        } else {
-                                            raw_color.modulate_with(&shading_color)
-                                        };
-                                        self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent);
-                                        }
-                                }
-                                vertex.x += 1;
-                            }
-                            vertex.x = origin.x;
-                            vertex.y += 1;
-                        }
-                    }
-                    None => { // non-textured
-                        for y in 0..height {
-                            for x in 0..width {
-                                if vertex.is_inside_drawing_area(&self.drawing_area) {
-                                    self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent);
-                                }
-                                vertex.x += 1;
-                            }
-                            vertex.x = origin.x;
-                            vertex.y += 1;
-                        }
-                    }
-                }
-
-                self.gp0state = Gp0State::WaitingCommand;
-            }
-            _ => {}
-        }
-    }
-
-    fn get_texture_pixel(&self,
-                         clut_x: u32,
-                         clut_y: u32,
-                         u: u32,
-                         v: u32) -> u16 {
+    pub(super) fn get_texture_pixel(&self, clut_x: u32, clut_y: u32, u: u32, v: u32, texture_page_x:u8, texture_page_y: u8, texture_depth:TextureDepth) -> u16 {
         /*
         GP0(E2h) - Texture Window setting
           0-4    Texture window Mask X   (in 8 pixel steps)
@@ -622,11 +335,11 @@ impl GPU {
         let u = (u & !((self.texture.window_x_mask as u32) << 3)) | (((self.texture.window_x_offset & self.texture.window_x_mask) as u32) << 3);
         let v = (v & !((self.texture.window_y_mask as u32) << 3)) | (((self.texture.window_y_offset & self.texture.window_y_mask) as u32) << 3);
 
-        let y = ((self.texture.page_base_y as u32) << 8) + v;
+        let y = ((texture_page_y as u32) << 8) + v;
 
-        match self.texture.depth {
+        match texture_depth {
             TextureDepth::T4Bit => {
-                let vram_x_pixels = (((self.texture.page_base_x as u32) << 6) + (u >> 2)) & 0x3FF;
+                let vram_x_pixels = (((texture_page_x as u32) << 6) + (u >> 2)) & 0x3FF;
                 let byte_offset = (((y << 10) + vram_x_pixels) as usize) << 1;
                 let value = self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8);
                 let shift = (u & 3) << 2;
@@ -636,7 +349,7 @@ impl GPU {
                 self.vram[clut_addr] as u16 | ((self.vram[clut_addr + 1] as u16) << 8)
             }
             TextureDepth::T8Bit => {
-                let vram_x_pixels = (((self.texture.page_base_x as u32) << 6) + (u >> 1)) & 0x3FF;
+                let vram_x_pixels = (((texture_page_x as u32) << 6) + (u >> 1)) & 0x3FF;
                 let byte_offset = (((y << 10) + vram_x_pixels) as usize) << 1;
                 let value = self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8);
                 let shift = (u & 1) << 3;
@@ -647,7 +360,7 @@ impl GPU {
                 self.vram[clut_addr] as u16 | ((self.vram[clut_addr + 1] as u16) << 8)
             }
             TextureDepth::T15Bit => {
-                let vram_x_pixels = (((self.texture.page_base_x as u32) << 6) + u) & 0x3FF;
+                let vram_x_pixels = (((texture_page_x as u32) << 6) + u) & 0x3FF;
                 let byte_offset = (((y << 10) + vram_x_pixels) as usize) << 1;
                 self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8)
             }

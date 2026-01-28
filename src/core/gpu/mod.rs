@@ -1,5 +1,8 @@
 mod gp1;
 mod gp0;
+mod draw_line;
+mod draw_rectangle;
+mod draw_polygon;
 
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
@@ -428,8 +431,9 @@ struct ReadyBits {
     ready_to_receive_dma_block: bool, // 28
 }
 
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug,Clone,Copy,Default)]
 enum SemiTransparency {
+    #[default]
     Average,
     Additive,
     Subtractive,
