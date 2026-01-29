@@ -1,4 +1,4 @@
-use tracing::debug;
+use tracing::{debug, info};
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
 
 impl GPU {

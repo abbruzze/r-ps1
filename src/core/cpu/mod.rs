@@ -1,7 +1,7 @@
 use crate::core::cpu::cop2::Cop2;
 use crate::core::cpu::instruction::{Instruction, Opcode};
 use crate::core::memory;
-use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
+use crate::core::memory::{Memory, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
 use std::mem;
 use tracing::{debug, error, info, warn};
 use crate::core::memory::bus::Bus;
@@ -99,7 +99,7 @@ struct ICache {
     requests: usize,
 }
 
-struct ICacheResult(u32,usize); // value read, cycle penalty
+struct ICacheResult(u32,usize,bool); // value read, cycle penalty
 
 impl ICache {
     fn new() -> Self {
@@ -127,8 +127,10 @@ impl ICache {
         let offset = ((address & 0x0F) >> 2) as usize; // 16 bytes, 4 words
         let mut penalty = 0usize;
 
+        let mut cache_hit = true;
         if !line.valid || line.tag != tag {
             // Cache miss
+            cache_hit = false;
             self.cache_miss += 1;
             line.valid = true;
             line.tag = tag;
@@ -148,7 +150,7 @@ impl ICache {
                 base_address += 4; // next word
             }
         }
-        ICacheResult(line.line[offset],penalty)
+        ICacheResult(line.line[offset],penalty,cache_hit)
     }
 
     fn invalidate_tag(&mut self,address:u32) {
@@ -222,6 +224,13 @@ impl WriteQueue {
             self.tail = (self.tail + 1) & 3;  // Modulo 4 con AND
             self.len += 1;
         }
+    }
+
+    fn peek_address(&self) -> Option<u32> {
+        if self.len == 0 {
+            return None;
+        }
+        Some(self.queue[self.head].0)
     }
 
     fn dequeue(&mut self) -> Option<(u32, u32, usize)> {
@@ -508,18 +517,9 @@ impl Cpu {
         self.i_cache.write_opcode(address,opcode);
     }
 
-    pub fn execute_next_instructions<const CYCLES:usize>(&mut self,memory: &mut Bus) -> usize {
-        let mut cycles = 0usize;
-        while cycles < CYCLES {
-            cycles += self.execute_next_instruction(memory);
-        }
-
-        cycles
-    }
-
-    pub fn execute_next_instruction(&mut self,memory: &mut Bus) -> usize {
+    pub fn execute_next_instruction(&mut self,memory: &mut Bus,dma_in_progress:bool) -> usize {
         // check pending operations during last op_cycles
-        self.update_pending_operations(memory);
+        self.update_pending_operations(memory,dma_in_progress);
         // reset cycle count
         self.op_cycles = 1;
         self.last_mem_read_address = None;
@@ -547,11 +547,17 @@ impl Cpu {
          */
         let pc_k_segment = memory::get_memory_seg(self.pc);
         self.last_opcode = if pc_k_segment.is_cached() {
-            let ICacheResult(op,cycles) = self.i_cache.read(self.pc,memory);
+            let ICacheResult(op,cycles,hit) = self.i_cache.read(self.pc,memory);
+            if dma_in_progress && !hit {
+                return self.op_cycles;
+            }
             self.op_cycles += cycles;
             op
         }
         else { // opcode is fetched directly from non-cached memory
+            if dma_in_progress {
+                return self.op_cycles;
+            }
             let mem_read = memory.read::<32>(self.pc,true);
             match mem_read {
                 ReadMemoryAccess::Read(op,penalty_cycles) => {
@@ -589,6 +595,9 @@ impl Cpu {
         if opcode.is_write_memory() {
             let target_address = self.get_read_write_memory_address(&i);
             use_write_cache = memory::get_memory_seg(target_address).is_cached();
+            if !use_write_cache && dma_in_progress && !matches!(memory::get_memory_section(target_address),MemorySection::ScratchPad) {
+                return self.op_cycles;
+            }
             if use_write_cache && self.write_queue.is_full() { // writing to a cached memory address with queue full
                 self.apply_delayed_load();
                 return self.op_cycles;
@@ -601,6 +610,15 @@ impl Cpu {
                 if self.write_queue.exists_address(target_address) {
                     self.apply_delayed_load();
                     return self.op_cycles;
+                }
+            }
+            else if dma_in_progress {
+                // During DMA, any read access from RAM or I/O registers or filling more than 4 entries into the write queue will stall the CPU until the DMA is finished.
+                match memory::get_memory_section(target_address) {
+                    MemorySection::IOPorts | MemorySection::MainRAM => {
+                        return self.op_cycles;
+                    }
+                    _ => {}
                 }
             }
             // reads from uncached memory always wait for the write queue to empty
@@ -659,7 +677,7 @@ impl Cpu {
 
     // ==========================================================================
 
-    fn update_pending_operations(&mut self,memory:&mut Bus) {
+    fn update_pending_operations(&mut self,memory:&mut Bus,dma_in_progress:bool) {
         // mul/div operation
         if self.mul_div_pending_cycles > 0 {
             self.mul_div_pending_cycles = self.mul_div_pending_cycles.saturating_sub(self.op_cycles);
@@ -670,6 +688,13 @@ impl Cpu {
         }
         // write-queue
         if !self.write_queue.is_empty() {
+            if dma_in_progress {
+                if let Some(address) = self.write_queue.peek_address() {
+                    if !matches!(memory::get_memory_section(address), MemorySection::ScratchPad) {
+                        return;
+                    }
+                }
+            }
             self.write_queue_elapsed += self.op_cycles;
             while self.write_queue_elapsed > QUEUE_WRITE_MEM_CYCLES {
                 self.write_queue_elapsed -= QUEUE_WRITE_MEM_CYCLES;

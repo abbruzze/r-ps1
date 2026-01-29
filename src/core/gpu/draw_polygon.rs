@@ -82,7 +82,7 @@ impl GPU {
                 let shading_color = Color::from_u32(cmd);
 
                 if is_gouraud && is_textured {
-                    warn!("GPU: draw_polygon primitive with both gouraud shading and texture");
+                    //warn!("GPU: draw_polygon primitive with both gouraud shading and texture");
                 }
 
                 let mut polygon = Polygon::default();

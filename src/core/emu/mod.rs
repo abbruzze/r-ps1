@@ -112,7 +112,7 @@ impl Emulator {
 
         let mut irq_handler = IrqHandler::new();
 
-        const LOAD_EXE_PENDING: bool = true;
+        const LOAD_EXE_PENDING: bool = false;
         let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\triangle.exe");
 
         self.just_entered_in_step_mode = false;
@@ -123,7 +123,7 @@ impl Emulator {
             info!("Waiting to reach EXE loading point ...");
 
             while self.cpu.get_pc() != 0x80030000 {
-                self.cpu.execute_next_instruction(&mut self.bus) as u64;
+                self.cpu.execute_next_instruction(&mut self.bus,dma_in_progress) as u64;
             }
 
             match self.load_exe(&exe_path) {
@@ -157,15 +157,13 @@ impl Emulator {
                     self.check_input();
                     thread::sleep(Duration::from_millis(100));
                 }
-                self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus);
+                self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,dma_in_progress);
                 self.bus.get_clock_mut().advance_time(self.last_cycles as u64);
 
                 if send_step {
                     self.send_cpu_info(&loop_tx_cmd);
                     continue 'main_loop;
                 }
-                // SIO0
-                //self.bus.get_sio0_mut().tick(self.last_cycles, &mut irq_handler);
                 // DMA
                 dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus, &mut irq_handler);
                 // IRQs

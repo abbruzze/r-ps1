@@ -125,7 +125,7 @@ impl GPU {
     fn gp1_start_of_display_area(&mut self,cmd:u32) {
         self.display_config.vram_x_start = (cmd & 0x3FF) as u16;
         self.display_config.vram_y_start = ((cmd >> 10) & 0x1FF) as u16;
-        info!("GP1(05) Start of display AREA X={} Y={}",self.display_config.vram_x_start,self.display_config.vram_y_start);
+        debug!("GP1(05) Start of display AREA X={} Y={}",self.display_config.vram_x_start,self.display_config.vram_y_start);
     }
     /*
     GP1(06h) - Horizontal Display range (on Screen)
@@ -138,7 +138,7 @@ impl GPU {
     fn gp1_horizontal_display_range(&mut self,cmd:u32) {
         self.display_config.horizontal_start = (cmd & 0xFFF) as u16;
         self.display_config.horizontal_end = ((cmd >> 12) & 0xFFF) as u16;
-        info!("GP1(06) Horizontal display range X1={} X2={} X-SIZE={}",self.display_config.horizontal_start,self.display_config.horizontal_end,(self.display_config.horizontal_end - self.display_config.horizontal_start) as f64 / self.display_config.h_res.get_divider() as f64);
+        debug!("GP1(06) Horizontal display range X1={} X2={} X-SIZE={}",self.display_config.horizontal_start,self.display_config.horizontal_end,(self.display_config.horizontal_end - self.display_config.horizontal_start) as f64 / self.display_config.h_res.get_divider() as f64);
     }
     /*
     GP1(07h) - Vertical Display range (on Screen)
@@ -152,7 +152,7 @@ impl GPU {
     fn gp1_vertical_display_range(&mut self,cmd:u32) {
         self.display_config.vertical_start = (cmd & 0x3FF) as u16;
         self.display_config.vertical_end = ((cmd >> 10) & 0x3FF) as u16;
-        info!("GP1(07) Vertical display range Y1={} Y2={} Y-SIZE={}",self.display_config.vertical_start,self.display_config.vertical_end,self.display_config.vertical_end - self.display_config.vertical_start);
+        debug!("GP1(07) Vertical display range Y1={} Y2={} Y-SIZE={}",self.display_config.vertical_start,self.display_config.vertical_end,self.display_config.vertical_end - self.display_config.vertical_start);
     }
     /*
     GP1(08h) - Display mode
@@ -180,7 +180,7 @@ impl GPU {
         if (cmd & 0x80) != 0 {
             warn!("GP1(08) Display mode with H flip - not supported on v2 GPU");
         }
-        info!("GP1(08) Display mode HRES={:?} VRES={:?} MODE={:?} DEPTH={:?} INTERLACED={}",self.display_config.h_res,self.display_config.v_res,self.display_config.video_mode,self.display_config.display_depth,self.display_config.interlaced);
+        debug!("GP1(08) Display mode HRES={:?} VRES={:?} MODE={:?} DEPTH={:?} INTERLACED={}",self.display_config.h_res,self.display_config.v_res,self.display_config.video_mode,self.display_config.display_depth,self.display_config.interlaced);
     }
     /*
     GP1(10h) - Read GPU internal register

@@ -332,7 +332,7 @@ impl DMAChannel {
             }
             self.update_remaining_blocks_words(true);
             self.waiting_next_block = true;
-            return DMAResult::Paused;
+            return DMAResult::BlockFinished;
         };
 
         DMAResult::InProgress
@@ -366,6 +366,7 @@ impl DMAChannel {
                     if (next_node_address & 0x800000) != 0 { // TODO check
                         self.madr_read = next_node_address;
                         self.transfer_completed();
+                        info!("Linked List transfer completed");
                         return DMAResult::Finished;
                     }
                     self.madr = next_node_address;
@@ -465,6 +466,7 @@ impl DMAChannel {
         self.update_remaining_blocks_words(false);
         self.update_chopping_windows();
         self.waiting_next_block = false;
+        self.linked_list_header = None;
         info!("Channel[{}] write control register: {:08X} direction={:?} syncMode={:?} active={} trigger={} remaining_words={:04X} remaining_blocks={:04X} madr={:08X}",self.id,value,self.transfer_direction,self.sync_mode,(value & (1 << 24)) != 0,(value & (1 << 28)) != 0,self.remaining_words,self.remaining_blocks,self.madr);
     }
 

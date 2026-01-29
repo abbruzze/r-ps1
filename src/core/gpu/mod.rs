@@ -732,7 +732,7 @@ impl GPU {
 
         gpu
     }
-    
+
     pub fn set_show_vram(&mut self,enabled:bool) {
         self.show_whole_vram = enabled;
     }
@@ -901,7 +901,6 @@ impl GPU {
                     InterlaceField::Odd => InterlaceField::Even,
                 }
             }
-            //self.throttle();
         }
 
         new_frame
@@ -925,7 +924,7 @@ impl GPU {
         else {
             self.display_config.visible_area()
         };
-        
+
         let crt_width = if self.show_whole_vram { 1024 } else { self.display_config.h_res.0 };
         let crt_height = if self.show_whole_vram {
             512
