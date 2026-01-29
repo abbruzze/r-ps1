@@ -1,4 +1,4 @@
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
 
 #[derive(Debug,Clone,Default)]
@@ -168,7 +168,7 @@ impl GPU {
     }
 
     fn draw_polygon(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
-        info!("Drawing polygon: {:?} gouraud={is_gouraud} textured={is_textured} semi_transparent={is_semi_transparent} raw_texture={is_raw_texture}",polygon);
+        debug!("Drawing polygon: {:?} gouraud={is_gouraud} textured={is_textured} semi_transparent={is_semi_transparent} raw_texture={is_raw_texture}",polygon);
         self.draw_triangle::<0>(polygon,is_gouraud,is_textured,is_semi_transparent,is_raw_texture);
         if polygon.vertex.len() == 4 {
             self.draw_triangle::<1>(polygon,is_gouraud,is_textured,is_semi_transparent,is_raw_texture);
@@ -249,13 +249,14 @@ impl GPU {
         };
 
         // upper half =============================================================================================
+
         let dy01 = (v1.y - v0.y) as i32;
         let dy02 = (v2.y - v0.y) as i32;
 
         for y in v0.y..v1.y {
             let t = (y - v0.y) as i32;
-            let x01 = ((v0.x as i32) << 16) + (((v1.x as i32 - v0.x as i32) << 16).saturating_mul(t)) / dy01.max(1);
-            let x02 = ((v0.x as i32) << 16) + (((v2.x as i32 - v0.x as i32) << 16).saturating_mul(t)) / dy02.max(1);
+            let x01 = (((v0.x as i64) << 16) + (((v1.x as i64 - v0.x as i64) << 16).saturating_mul(t as i64)) / dy01.max(1) as i64) as i32;
+            let x02 = (((v0.x as i64) << 16) + (((v2.x as i64 - v0.x as i64) << 16).saturating_mul(t as i64)) / dy02.max(1) as i64) as i32;
 
             let (c01,c02) = if is_gouraud {
                 (Color {
@@ -285,8 +286,8 @@ impl GPU {
             let t1 = (y - v1.y) as i32;
             let t2 = (y - v0.y) as i32;
 
-            let x12 = ((v1.x as i32) << 16) + (((v2.x as i32 - v1.x as i32) << 16) * t1) / dy12.max(1);
-            let x02 = ((v0.x as i32) << 16) + (((v2.x as i32 - v0.x as i32) << 16) * t2) / dy02.max(1);
+            let x12 = (((v1.x as i64) << 16) + (((v2.x as i64 - v1.x as i64) << 16).saturating_mul(t1 as i64)) / dy12.max(1) as i64) as i32;
+            let x02 = (((v0.x as i64) << 16) + (((v2.x as i64 - v0.x as i64) << 16).saturating_mul(t2 as i64)) / dy02.max(1) as i64) as i32;
 
             let c12 = if is_gouraud {
                 Color {

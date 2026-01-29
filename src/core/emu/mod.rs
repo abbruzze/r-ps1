@@ -37,6 +37,7 @@ pub struct Emulator {
     new_frame: bool,
     warp_mode_enabled: bool,
     paused: bool,
+    debug_vram_mode: bool,
     last_throttle_timestamp: Instant,
 }
 
@@ -70,6 +71,7 @@ impl Emulator {
             new_frame: false,
             warp_mode_enabled: false,
             paused: false,
+            debug_vram_mode: false,
             last_throttle_timestamp: Instant::now(),
         };
 
@@ -258,6 +260,10 @@ impl Emulator {
                     else {
                         self.cancel_throttling();
                     }
+                }
+                GUIEvent::VRAMDebugMode => {
+                    self.debug_vram_mode ^= true;
+                    self.gpu.borrow_mut().set_show_vram(self.debug_vram_mode);
                 }
             }
         }

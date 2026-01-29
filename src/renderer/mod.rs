@@ -15,6 +15,7 @@ pub enum GUIEvent {
     Control(usize,ControllerButton,bool),
     WarpMode,
     Paused,
+    VRAMDebugMode,
 }
 
 /*

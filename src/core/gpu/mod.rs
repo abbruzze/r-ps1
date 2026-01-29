@@ -684,10 +684,10 @@ pub struct GPU {
     dma_direction: DMADirection,
     ready_bits: ReadyBits,
     raster: Raster,
-    gpu_cycles_accumulator: usize,
     dot_clock_cycles: usize,
     gpu_read_register: u32,
     gp0state: Gp0State,
+    show_whole_vram: bool,
 }
 
 impl GPU {
@@ -709,10 +709,10 @@ impl GPU {
             dma_direction: DMADirection::default(),
             ready_bits: ReadyBits::default(),
             raster: Raster::default(),
-            gpu_cycles_accumulator: 0,
             dot_clock_cycles: 0,
             gpu_read_register: 0,
             gp0state: Gp0State::WaitingCommand,
+            show_whole_vram: false,
         };
 
         gpu.display_config.horizontal_start = 0x260 + 0;
@@ -731,6 +731,10 @@ impl GPU {
         gpu.ready_bits.ready_to_receive_dma_block = true;
 
         gpu
+    }
+    
+    pub fn set_show_vram(&mut self,enabled:bool) {
+        self.show_whole_vram = enabled;
     }
 
     pub fn get_renderer_mut(&mut self) -> &mut Box<dyn Renderer> {
@@ -915,15 +919,25 @@ impl GPU {
     }
 
     fn generate_new_frame(&mut self) {
-        let (frame_width,frame_height) = self.display_config.visible_area();
-        //let (frame_width,frame_height) = (1024,512);
-        let crt_width = self.display_config.h_res.0;
-        let crt_height = if self.display_config.interlaced {
-            self.display_config.video_mode.total_lines() << 1
+        let (frame_width,frame_height) = if self.show_whole_vram {
+            (1024,512)
         }
         else {
-            self.display_config.video_mode.total_lines()
+            self.display_config.visible_area()
         };
+        
+        let crt_width = if self.show_whole_vram { 1024 } else { self.display_config.h_res.0 };
+        let crt_height = if self.show_whole_vram {
+            512
+        }
+        else {
+            if self.display_config.interlaced {
+                self.display_config.video_mode.total_lines() << 1
+            } else {
+                self.display_config.video_mode.total_lines()
+            }
+        };
+
         let crt_start_x_offset = ((crt_width as u16).saturating_sub(frame_width as u16) >> 1) as usize;
         let crt_start_y_offset = ((crt_height as u16).saturating_sub(frame_height as u16) >> 1) as usize;
 

@@ -221,6 +221,11 @@ impl ApplicationHandler<GPUEvent> for PixelsRenderer {
                         let _ = self.gui_event_tx.send(GUIEvent::Paused);
                         return;
                     }
+                    // check vram debug mode
+                    if keycode == KeyCode::F2 && !self.last_key_repeat_state {
+                        let _ = self.gui_event_tx.send(GUIEvent::VRAMDebugMode);
+                        return;
+                    }
                     match self.config.controller_1_config.map_key(keycode) {
                         Some(button) => {
                             let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key_repeat_state));
