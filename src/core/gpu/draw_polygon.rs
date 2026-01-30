@@ -207,8 +207,8 @@ impl GPU {
         }
 
         let mut draw_span = |y: i16, x0: i32, c0: Color, uv0:UV, x1: i32, c1: Color, uv1:UV,texture:&Option<PolygonTexture>| {
-            let mut xs = x0 >> 16;
-            let mut xe = x1 >> 16;
+            let mut xs = x0 >> 12;
+            let mut xe = x1 >> 12;
 
             let mut uv_start = uv0;
             let mut uv_end = uv1;
@@ -224,18 +224,18 @@ impl GPU {
 
             let dx = (xe - xs).max(1);
 
-            let dr_dx = ((c_end.r as i32 - c_start.r as i32 + 1) << 16) / dx;
-            let dg_dx = ((c_end.g as i32 - c_start.g as i32 + 1) << 16) / dx;
-            let db_dx = ((c_end.b as i32 - c_start.b as i32 + 1) << 16) / dx;
+            let dr_dx = ((c_end.r as i32 - c_start.r as i32) << 12) / dx;
+            let dg_dx = ((c_end.g as i32 - c_start.g as i32) << 12) / dx;
+            let db_dx = ((c_end.b as i32 - c_start.b as i32) << 12) / dx;
 
-            let mut r = (c_start.r as i32) << 16;
-            let mut g = (c_start.g as i32) << 16;
-            let mut b = (c_start.b as i32) << 16;
+            let mut r = (c_start.r as i32) << 12;
+            let mut g = (c_start.g as i32) << 12;
+            let mut b = (c_start.b as i32) << 12;
 
-            let du_dx = if is_textured { ((uv_end.u as i32 - uv_start.u as i32 + 1) << 16) / dx } else { 0 };
-            let dv_dx = if is_textured { ((uv_end.v as i32 - uv_start.v as i32 + 1) << 16) / dx } else { 0 };
-            let mut u = if is_textured { (uv_start.u as i32) << 16 } else { 0 };
-            let mut v = if is_textured { (uv_start.v as i32) << 16 } else { 0 };
+            let du_dx = if is_textured { ((uv_end.u as i32 - uv_start.u as i32).max(1) << 12) / dx } else { 0 };
+            let dv_dx = if is_textured { ((uv_end.v as i32 - uv_start.v as i32).max(1) << 12) / dx } else { 0 };
+            let mut u = if is_textured { (uv_start.u as i32) << 12 } else { 0 };
+            let mut v = if is_textured { (uv_start.v as i32) << 12 } else { 0 };
 
             /*
             The PS1 GPU uses what is called the top-left rule.
@@ -246,9 +246,9 @@ impl GPU {
             for x in xs..xe {
                 let i = x - xs;
                 let mut color = if is_gouraud {
-                    Color::new((r >> 16).clamp(0, 255) as u8,
-                               (g >> 16).clamp(0, 255) as u8,
-                               (b >> 16).clamp(0, 255) as u8,
+                    Color::new((r >> 12).clamp(0, 255) as u8,
+                               (g >> 12).clamp(0, 255) as u8,
+                               (b >> 12).clamp(0, 255) as u8,
                                false)
                 }
                 else {
@@ -256,14 +256,16 @@ impl GPU {
                 };
 
                 let mut semi_transparency = self.semi_transparency;
+                let mut transparent_pixel = false;
 
                 if let Some(texture) = texture {
                     semi_transparency = texture.semi_transparency;
-                    let ux = (u >> 16).clamp(0,255) as u32;
-                    let vx = (v >> 16).clamp(0,255) as u32;
+                    let ux = (u >> 12).clamp(0,255) as u32;
+                    let vx = (v >> 12).clamp(0,255) as u32;
 
                     let texture_pixel = self.get_texture_pixel(texture.clut_x, texture.clut_y,ux,vx,texture.page_base_x,texture.page_base_y,texture.texture_depth);
-                    if texture_pixel != 0x0000 {
+                    transparent_pixel = texture_pixel == 0x0000;
+                    if !transparent_pixel {
                         let raw_color = Color::from_u16(texture_pixel);
                         if is_raw_texture {
                             color = raw_color;
@@ -281,7 +283,9 @@ impl GPU {
                 b += db_dx;
 
                 // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
-                self.draw_pixel(&Vertex { x: xs as i16 + i as i16, y }, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
+                if !transparent_pixel {
+                    self.draw_pixel(&Vertex { x: xs as i16 + i as i16, y }, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
+                }
             }
 
         };
@@ -292,8 +296,8 @@ impl GPU {
 
         for y in v0.y..v1.y {
             let t = (y - v0.y) as i32;
-            let x01 = (((v0.x as i64) << 16) + (((v1.x as i64 - v0.x as i64) << 16).saturating_mul(t as i64)) / dy01.max(1) as i64) as i32;
-            let x02 = (((v0.x as i64) << 16) + (((v2.x as i64 - v0.x as i64) << 16).saturating_mul(t as i64)) / dy02.max(1) as i64) as i32;
+            let x01 = (((v0.x as i64) << 12) + (((v1.x as i64 - v0.x as i64) << 12).saturating_mul(t as i64)) / dy01.max(1) as i64) as i32;
+            let x02 = (((v0.x as i64) << 12) + (((v2.x as i64 - v0.x as i64) << 12).saturating_mul(t as i64)) / dy02.max(1) as i64) as i32;
 
             let (c01,c02) = if is_gouraud {
                 (Color {
@@ -338,8 +342,8 @@ impl GPU {
             let t1 = (y - v1.y) as i32;
             let t2 = (y - v0.y) as i32;
 
-            let x12 = (((v1.x as i64) << 16) + (((v2.x as i64 - v1.x as i64) << 16).saturating_mul(t1 as i64)) / dy12.max(1) as i64) as i32;
-            let x02 = (((v0.x as i64) << 16) + (((v2.x as i64 - v0.x as i64) << 16).saturating_mul(t2 as i64)) / dy02.max(1) as i64) as i32;
+            let x12 = (((v1.x as i64) << 12) + (((v2.x as i64 - v1.x as i64) << 12).saturating_mul(t1 as i64)) / dy12.max(1) as i64) as i32;
+            let x02 = (((v0.x as i64) << 12) + (((v2.x as i64 - v0.x as i64) << 12).saturating_mul(t2 as i64)) / dy02.max(1) as i64) as i32;
 
             let (c12,c02) = if is_gouraud {
                 (Color {
