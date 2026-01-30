@@ -11,7 +11,7 @@ struct PolygonTexture {
     texture_depth: TextureDepth,
 }
 
-#[derive(Debug,Clone,Default)]
+#[derive(Debug,Clone,Default,Copy)]
 struct UV {
     u: u32,
     v: u32,
@@ -80,10 +80,6 @@ impl GPU {
                 let semi_transparent = (cmd & (1 << 25)) != 0;
                 let raw_texture = (cmd & (1 << 24)) != 0;
                 let shading_color = Color::from_u32(cmd);
-
-                if is_gouraud && is_textured {
-                    //warn!("GPU: draw_polygon primitive with both gouraud shading and texture");
-                }
 
                 let mut polygon = Polygon::default();
                 if is_textured {
@@ -183,6 +179,14 @@ impl GPU {
         let v = a as i32 + ((b as i32 - a as i32) * t) / t_max;
         v.clamp(0, 255) as u8
     }
+    #[inline]
+    fn lerp_u32(a: u32, b: u32, t: i32, dt: i32) -> u32 {
+        if dt == 0 {
+            a
+        } else {
+            a + (((b as i32 - a as i32) * t) / dt) as u32
+        }
+    }
 
     fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
         let v0 = &polygon.vertex[0 + OFFSET];
@@ -197,13 +201,17 @@ impl GPU {
         let (v1,c1,uv1) = verts[1];
         let (v2,c2,uv2) = verts[2];
 
+        // triangle with all vertexes equal
         if v0.y == v2.y {
             return;
         }
 
-        let mut draw_span = |y: i16, x0: i32, c0: Color, x1: i32, c1: Color| {
+        let mut draw_span = |y: i16, x0: i32, c0: Color, uv0:UV, x1: i32, c1: Color, uv1:UV,texture:&Option<PolygonTexture>| {
             let mut xs = x0 >> 16;
             let mut xe = x1 >> 16;
+
+            let mut uv_start = uv0;
+            let mut uv_end = uv1;
 
             let mut c_start = c0;
             let mut c_end   = c1;
@@ -211,6 +219,7 @@ impl GPU {
             if xs > xe {
                 std::mem::swap(&mut xs, &mut xe);
                 std::mem::swap(&mut c_start, &mut c_end);
+                std::mem::swap(&mut uv_start, &mut uv_end);
             }
 
             let dx = (xe - xs).max(1);
@@ -223,6 +232,11 @@ impl GPU {
             let mut g = (c_start.g as i32) << 16;
             let mut b = (c_start.b as i32) << 16;
 
+            let du_dx = if is_textured { ((uv_end.u as i32 - uv_start.u as i32) << 16) / dx } else { 0 };
+            let dv_dx = if is_textured { ((uv_end.v as i32 - uv_start.v as i32) << 16) / dx } else { 0 };
+            let mut u = if is_textured { (uv_start.u as i32) << 16 } else { 0 };
+            let mut v = if is_textured { (uv_start.v as i32) << 16 } else { 0 };
+
             /*
             The PS1 GPU uses what is called the top-left rule.
             If a pixel lies exactly on one of the triangle’s edges, only rasterize it if it’s on a top edge or a left edge.
@@ -231,25 +245,48 @@ impl GPU {
              */
             for x in xs..xe {
                 let i = x - xs;
-                let color = if is_gouraud {
-                    //Color::new(Self::lerp_u8(c_start.r, c_end.r, i, dx),Self::lerp_u8(c_start.g, c_end.g, i, dx),Self::lerp_u8(c_start.b, c_end.b, i, dx),c_start.m | c_end.m)
-                    Color::new((r >> 16).clamp(0, 255) as u8,(g >> 16).clamp(0, 255) as u8,(b >> 16).clamp(0, 255) as u8,c_start.m | c_end.m)
+                let mut color = if is_gouraud {
+                    Color::new((r >> 16).clamp(0, 255) as u8,
+                               (g >> 16).clamp(0, 255) as u8,
+                               (b >> 16).clamp(0, 255) as u8,
+                               c_start.m | c_end.m)
                 }
                 else {
                     c0
                 };
+
+                let mut semi_transparency = self.semi_transparency;
+
+                if let Some(texture) = texture {
+                    semi_transparency = texture.semi_transparency;
+                    let ux = (u >> 16).clamp(0,255) as u32;
+                    let vx = (v >> 16).clamp(0,255) as u32;
+
+                    let texture_pixel = self.get_texture_pixel(texture.clut_x, texture.clut_y,ux,vx,texture.page_base_x,texture.page_base_y,texture.texture_depth);
+                    if texture_pixel != 0x0000 {
+                        let raw_color = Color::from_u16(texture_pixel);
+                        if is_raw_texture {
+                            color = raw_color;
+                        } else {
+                            color = raw_color.modulate_with(&color);
+                        };
+                    }
+
+                    u += du_dx;
+                    v += dv_dx;
+                }
+
                 r += dr_dx;
                 g += dg_dx;
                 b += db_dx;
 
                 // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
-                self.draw_pixel(&Vertex { x: xs as i16 + i as i16, y }, &color, is_semi_transparent, is_gouraud || (is_textured && !is_raw_texture));
+                self.draw_pixel(&Vertex { x: xs as i16 + i as i16, y }, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
             }
 
         };
 
         // upper half =============================================================================================
-
         let dy01 = (v1.y - v0.y) as i32;
         let dy02 = (v2.y - v0.y) as i32;
 
@@ -277,7 +314,22 @@ impl GPU {
                 (*c0,*c0)
             };
 
-            draw_span(y, x01, c01, x02, c02);
+            let (uv01,uv02) = if is_textured {
+                (UV {
+                    u: Self::lerp_u32(uv0.u, uv1.u, t, dy01),
+                    v: Self::lerp_u32(uv0.v, uv1.v, t, dy01),
+                },
+                 UV {
+                     u: Self::lerp_u32(uv0.u, uv2.u, t, dy02),
+                     v: Self::lerp_u32(uv0.v, uv2.v, t, dy02),
+                 }
+                )
+            }
+            else {
+                (*uv0,*uv0)
+            };
+
+            draw_span(y, x01, c01,uv01, x02, c02,uv02,&polygon.texture);
         }
         // lower half =============================================================================================
         let dy12 = (v2.y - v1.y) as i32;
@@ -289,30 +341,41 @@ impl GPU {
             let x12 = (((v1.x as i64) << 16) + (((v2.x as i64 - v1.x as i64) << 16).saturating_mul(t1 as i64)) / dy12.max(1) as i64) as i32;
             let x02 = (((v0.x as i64) << 16) + (((v2.x as i64 - v0.x as i64) << 16).saturating_mul(t2 as i64)) / dy02.max(1) as i64) as i32;
 
-            let c12 = if is_gouraud {
-                Color {
+            let (c12,c02) = if is_gouraud {
+                (Color {
                     r: Self::lerp_u8(c1.r, c2.r, t1, dy12),
                     g: Self::lerp_u8(c1.g, c2.g, t1, dy12),
                     b: Self::lerp_u8(c1.b, c2.b, t1, dy12),
                     m: c1.m,
-                }
+                },
+                 Color {
+                     r: Self::lerp_u8(c0.r, c2.r, t2, dy02),
+                     g: Self::lerp_u8(c0.g, c2.g, t2, dy02),
+                     b: Self::lerp_u8(c0.b, c2.b, t2, dy02),
+                     m: c0.m,
+                 }
+                )
             }
             else {
-                *c0
-            };
-            let c02 = if is_gouraud {
-                Color {
-                    r: Self::lerp_u8(c0.r, c2.r, t2, dy02),
-                    g: Self::lerp_u8(c0.g, c2.g, t2, dy02),
-                    b: Self::lerp_u8(c0.b, c2.b, t2, dy02),
-                    m: c0.m,
-                }
-            }
-            else {
-                *c0
+                (*c0,*c0)
             };
 
-            draw_span(y, x12, c12, x02, c02);
+            let (uv12,uv02) = if is_textured {
+                (UV {
+                    u: Self::lerp_u32(uv1.u, uv2.u, t1, dy12),
+                    v: Self::lerp_u32(uv1.v, uv2.v, t1, dy12),
+                },
+                 UV {
+                     u: Self::lerp_u32(uv0.u, uv2.u, t2, dy02),
+                     v: Self::lerp_u32(uv0.v, uv2.v, t2, dy02),
+                 }
+                )
+            }
+            else {
+                (*uv1,*uv0)
+            };
+
+            draw_span(y, x12, c12, uv12, x02, c02, uv02,&polygon.texture);
         }
     }
 }

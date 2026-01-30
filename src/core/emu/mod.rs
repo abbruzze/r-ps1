@@ -112,8 +112,8 @@ impl Emulator {
 
         let mut irq_handler = IrqHandler::new();
 
-        const LOAD_EXE_PENDING: bool = false;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\triangle.exe");
+        const LOAD_EXE_PENDING: bool = true;
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\RenderTexturePolygon15BPP.exe");
 
         self.just_entered_in_step_mode = false;
         self.run_mode = RunMode::FreeMode;

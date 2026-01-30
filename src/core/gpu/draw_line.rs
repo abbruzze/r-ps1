@@ -94,7 +94,7 @@ impl GPU {
         let total_steps = dx.max(dy);
 
         if total_steps == 0 {
-            self.draw_pixel(start,start_color,semi_transparent,true);
+            self.draw_pixel(start,start_color,semi_transparent,Some(self.semi_transparency),true);
             return;
         }
 
@@ -118,7 +118,7 @@ impl GPU {
             let g = (g_current >> 16) as u8;
             let b = (b_current >> 16) as u8;
 
-            self.draw_pixel(&v, &Color::new(r,g,b,false), semi_transparent,true);
+            self.draw_pixel(&v, &Color::new(r,g,b,false), semi_transparent,Some(self.semi_transparency),true);
 
             if v.x == end.x && v.y == end.y {
                 break;

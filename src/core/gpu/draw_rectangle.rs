@@ -113,7 +113,7 @@ impl GPU {
                                         } else {
                                             raw_color.modulate_with(&shading_color)
                                         };
-                                        self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent);
+                                        self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent,Some(self.semi_transparency));
                                     }
                                 }
                                 vertex.x += 1;
@@ -126,7 +126,7 @@ impl GPU {
                         for y in 0..height {
                             for x in 0..width {
                                 if vertex.is_inside_drawing_area(&self.drawing_area) {
-                                    self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent);
+                                    self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent,Some(self.semi_transparency));
                                 }
                                 vertex.x += 1;
                             }

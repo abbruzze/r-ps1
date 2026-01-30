@@ -279,7 +279,7 @@ impl GPU {
         self.vram[offset] as u16 | (self.vram[offset + 1] as u16) << 8
     }
     #[inline]
-    pub(super) fn draw_pixel_offset(&mut self, offset:usize, pixel:u16, use_mask:bool, semi_transparent:bool) {
+    pub(super) fn draw_pixel_offset(&mut self, offset:usize, pixel:u16, use_mask:bool, semi_transparent:bool,semi_transparency: Option<SemiTransparency>) {
         let mut pixel_to_write = pixel;
         if use_mask {
             let old_pixel = self.get_pixel_15(offset);
@@ -292,12 +292,12 @@ impl GPU {
                 pixel_to_write |= 0x8000;
             }
             if semi_transparent {
-                pixel_to_write = self.semi_transparency.blend_rgb555(pixel_to_write,old_pixel);
+                pixel_to_write = semi_transparency.unwrap().blend_rgb555(pixel_to_write,old_pixel);
             }
         }
         else if semi_transparent {
             let old_pixel = self.get_pixel_15(offset);
-            pixel_to_write = self.semi_transparency.blend_rgb555(pixel_to_write,old_pixel);
+            pixel_to_write = semi_transparency.unwrap().blend_rgb555(pixel_to_write,old_pixel);
         }
         
         self.vram[offset] = pixel_to_write as u8;
@@ -305,7 +305,7 @@ impl GPU {
     }
 
     #[inline(always)]
-    pub(super) fn draw_pixel(&mut self,v:&Vertex,color:&Color,semi_transparent:bool,allow_dithering:bool) {
+    pub(super) fn draw_pixel(&mut self,v:&Vertex,color:&Color,semi_transparent:bool,semi_transparency: Option<SemiTransparency>,allow_dithering:bool) {
         if v.is_inside_drawing_area(&self.drawing_area) {
             let color = if allow_dithering && self.dithering {
                 let dither_value = DITHER_TABLE[(v.y & 3) as usize][(v.x & 3) as usize];
@@ -314,7 +314,7 @@ impl GPU {
             else {
                 *color
             };
-            self.draw_pixel_offset(self.get_vram_offset_15(v.x as u16, v.y as u16), color.to_u16(), true, semi_transparent);
+            self.draw_pixel_offset(self.get_vram_offset_15(v.x as u16, v.y as u16), color.to_u16(), true, semi_transparent,semi_transparency);
         }
     }
 
@@ -406,7 +406,7 @@ impl GPU {
                         let src_offset = self.get_vram_offset_15(src_x + x, src_y + y);
                         let pixel = self.get_pixel_15(src_offset);
                         let dest_offset = self.get_vram_offset_15(dest_x + x, dest_y + y);
-                        self.draw_pixel_offset(dest_offset, pixel, true,false);
+                        self.draw_pixel_offset(dest_offset, pixel, true,false,None);
                     }
                 }
                 self.gp0state = Gp0State::WaitingCommand;
@@ -478,9 +478,9 @@ impl GPU {
             Gp0State::VRamCopy(_,config) => {
                 let vram_x = (config.coord_x.wrapping_add(config.counter_x)) & 0x3FF;
                 let vram_y = (config.coord_y.wrapping_add(config.counter_y)) & 0x1FF;
-                self.draw_pixel_offset(self.get_vram_offset_15(vram_x + 1, vram_y), (word >> 16) as u16, true, false);
+                self.draw_pixel_offset(self.get_vram_offset_15(vram_x + 1, vram_y), (word >> 16) as u16, true, false,None);
                 debug!("Cpu->VRam ({vram_x},{vram_y}) = {:04X}",word >> 16);
-                self.draw_pixel_offset(self.get_vram_offset_15(vram_x, vram_y), word as u16, true, false);
+                self.draw_pixel_offset(self.get_vram_offset_15(vram_x, vram_y), word as u16, true, false,None);
                 debug!("Cpu->VRam ({},{vram_y}) = {:04X}",vram_x + 1,word as u16);
             }
             _ => {}
@@ -530,7 +530,7 @@ impl GPU {
                 debug!("Executing Quick VRam Fill color={:04X} pos=({},{}) width={} height={}",fill_color,x_pos,y_pos,width,height);
                 for y in 0..height {
                     for x in 0..width {
-                        self.draw_pixel_offset(self.get_vram_offset_15(x_pos + x, y_pos + y), fill_color, false, false);
+                        self.draw_pixel_offset(self.get_vram_offset_15(x_pos + x, y_pos + y), fill_color, false, false,None);
                     }
                 }
                 self.gp0state = Gp0State::WaitingCommand;
