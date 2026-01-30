@@ -224,16 +224,16 @@ impl GPU {
 
             let dx = (xe - xs).max(1);
 
-            let dr_dx = ((c_end.r as i32 - c_start.r as i32) << 16) / dx;
-            let dg_dx = ((c_end.g as i32 - c_start.g as i32) << 16) / dx;
-            let db_dx = ((c_end.b as i32 - c_start.b as i32) << 16) / dx;
+            let dr_dx = ((c_end.r as i32 - c_start.r as i32 + 1) << 16) / dx;
+            let dg_dx = ((c_end.g as i32 - c_start.g as i32 + 1) << 16) / dx;
+            let db_dx = ((c_end.b as i32 - c_start.b as i32 + 1) << 16) / dx;
 
             let mut r = (c_start.r as i32) << 16;
             let mut g = (c_start.g as i32) << 16;
             let mut b = (c_start.b as i32) << 16;
 
-            let du_dx = if is_textured { ((uv_end.u as i32 - uv_start.u as i32) << 16) / dx } else { 0 };
-            let dv_dx = if is_textured { ((uv_end.v as i32 - uv_start.v as i32) << 16) / dx } else { 0 };
+            let du_dx = if is_textured { ((uv_end.u as i32 - uv_start.u as i32 + 1) << 16) / dx } else { 0 };
+            let dv_dx = if is_textured { ((uv_end.v as i32 - uv_start.v as i32 + 1) << 16) / dx } else { 0 };
             let mut u = if is_textured { (uv_start.u as i32) << 16 } else { 0 };
             let mut v = if is_textured { (uv_start.v as i32) << 16 } else { 0 };
 
@@ -249,7 +249,7 @@ impl GPU {
                     Color::new((r >> 16).clamp(0, 255) as u8,
                                (g >> 16).clamp(0, 255) as u8,
                                (b >> 16).clamp(0, 255) as u8,
-                               c_start.m | c_end.m)
+                               false)
                 }
                 else {
                     c0
