@@ -1,4 +1,5 @@
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
+use crate::core::interrupt::IrqHandler;
 
 impl GPU {
     /*
@@ -26,7 +27,7 @@ impl GPU {
     Wire-Frame
     Poly-Lines can be used (among others) to create Wire-Frame polygons (by setting the last Vertex equal to Vertex 1).
      */
-    pub(super) fn operation_line_rendering(&mut self,cmd:u32) {
+    pub(super) fn operation_line_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 let is_gouraud = (cmd & (1 << 28)) != 0;

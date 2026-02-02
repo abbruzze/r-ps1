@@ -4,17 +4,15 @@ mod draw_line;
 mod draw_rectangle;
 mod draw_polygon;
 
+use std::cmp;
+use crate::core::clock::Clock;
+use crate::core::clock::EventType;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
-use crate::core::timer::Timer;
+use crate::core::memory::bus::Bus;
 use crate::renderer::{GPUFrameBuffer, Renderer};
 use std::sync::Arc;
-use std::{cmp, thread};
-use std::time::{Duration, Instant};
 use tracing::{debug, info};
-use crate::core::clock::EventType;
-use crate::core::clock::Clock;
-use crate::core::memory::bus::Bus;
 /*
 GPU Versions
 Summary of GPU Differences
@@ -578,7 +576,7 @@ struct Raster {
     raster_line: usize,
 }
 
-type GP0Operation = fn(&mut GPU,u32);
+type GP0Operation = fn(&mut GPU,u32,&mut IrqHandler);
 
 #[derive(Debug,Default,Clone,Copy)]
 struct VRamCopyConfig {
@@ -990,8 +988,8 @@ impl DmaDevice for GPU {
     fn dma_request(&self) -> bool {
         true
     }
-    fn dma_write(&mut self, word: u32) {
-        self.gp0_cmd(word);
+    fn dma_write(&mut self, word: u32,clock:&mut Clock,irq_handler:&mut  IrqHandler) {
+        self.gp0_cmd(word,clock,irq_handler);
     }
     fn dma_read(&mut self) -> u32 {
         self.gpu_read_read()

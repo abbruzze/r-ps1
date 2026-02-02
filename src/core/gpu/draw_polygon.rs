@@ -1,6 +1,7 @@
 use std::cmp;
 use tracing::{debug, info, warn};
 use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
+use crate::core::interrupt::IrqHandler;
 
 #[derive(Debug,Clone,Default)]
 struct PolygonTexture {
@@ -81,7 +82,7 @@ impl GPU {
     Within the triangle, the ordering of the vertices doesn't matter on the GPU side (a front-back check, based on clockwise or anti-clockwise ordering, can be implemented at the GTE side).
     Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
      */
-    pub(super) fn operation_polygon_rendering(&mut self,cmd:u32) {
+    pub(super) fn operation_polygon_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 let is_gouraud = (cmd & (1 << 28)) != 0;
@@ -406,7 +407,10 @@ impl GPU {
 
     #[inline(always)]
     fn is_top_left(a: &Vertex, b: &Vertex) -> bool {
-        (a.y < b.y) || (a.y == b.y && a.x > b.x)
+        let dy = b.y - a.y;
+        let dx = b.x - a.x;
+
+        (dy < 0) || (dy == 0 && dx < 0)
     }
 
     fn draw_triangle_bounding_box<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {

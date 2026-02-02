@@ -1,5 +1,6 @@
 use tracing::{debug, info};
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
+use crate::core::interrupt::IrqHandler;
 
 impl GPU {
     /*
@@ -36,7 +37,7 @@ impl GPU {
     Optionally, X/Y-Flip bits can be set in Texpage.Bit12/13, these bits cause the texture coordinates to be decremented (instead of incremented). The X/Y-Flip bits do affect only Rectangles (not Polygons, nor VRAM Transfers).
     Caution: Reportedly, the X/Y-Flip feature isn't supported on old PSX consoles (unknown which ones exactly, maybe such with PU-7 mainboards, and unknown how to detect flipping support; except of course by reading VRAM).
      */
-    pub(super) fn operation_rectangle_rendering(&mut self,cmd:u32) {
+    pub(super) fn operation_rectangle_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 let mut expected_data = 1usize;

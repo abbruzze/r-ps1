@@ -2,7 +2,7 @@ use crate::core::cpu::cop0::Cop0;
 use crate::core::cpu::Cpu;
 use crate::core::dma::DMAController;
 use crate::core::gpu::GPU;
-use crate::core::interrupt::{InterruptController, InterruptType};
+use crate::core::interrupt::{InterruptController, InterruptType, IrqHandler};
 use crate::core::memory::get_memory_map;
 use crate::core::memory::{ArrayMemory, MemoryMap, MemorySection, MemorySegment};
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
@@ -576,7 +576,9 @@ impl Bus {
                     self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.gpu.borrow_mut().gpu_read_read(), IO_REG_ACCESS_CYCLES);
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.gpu.borrow().gpu_read_peek());
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
-                        bus.gpu.borrow_mut().gp0_cmd(value);
+                        let mut irq_handler = IrqHandler::new();
+                        bus.gpu.borrow_mut().gp0_cmd(value,&mut bus.clock,&mut irq_handler);
+                        irq_handler.forward_to_controller(bus);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }
                 }

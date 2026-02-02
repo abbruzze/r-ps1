@@ -1,4 +1,5 @@
 use tracing::{debug, info, warn};
+use crate::core::interrupt::IrqHandler;
 use super::{DMADirection, DisplayDepth, Gp0State, VideoHorizontalResolution, VideoMode, VideoVerticalResolution, GPU};
 
 impl GPU {
@@ -56,12 +57,13 @@ impl GPU {
         self.gp1_horizontal_display_range(0x200 | (0x200+256*10) << 12);
         self.gp1_vertical_display_range(0x10 | (0x10+240) << 10);
         self.gp1_display_mode(0);
-        self.gp0_draw_mode_settings(0);
-        self.gp0_texture_window_settings(0);
-        self.gp0_set_drawing_area_top_left(0);
-        self.gp0_set_drawing_area_bottom_right(0);
-        self.gp0_set_drawing_offset(0);
-        self.gp0_mask_bit_settings(0);
+        let mut fake_interrupt_handler = IrqHandler::new();
+        self.gp0_draw_mode_settings(0,&mut fake_interrupt_handler);
+        self.gp0_texture_window_settings(0,&mut fake_interrupt_handler);
+        self.gp0_set_drawing_area_top_left(0,&mut fake_interrupt_handler);
+        self.gp0_set_drawing_area_bottom_right(0,&mut fake_interrupt_handler);
+        self.gp0_set_drawing_offset(0,&mut fake_interrupt_handler);
+        self.gp0_mask_bit_settings(0,&mut fake_interrupt_handler);
         self.gp0state = Gp0State::WaitingCommand
     }
     /*

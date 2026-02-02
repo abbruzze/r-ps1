@@ -1,8 +1,10 @@
+use crate::core::clock::Clock;
+use crate::core::interrupt::{InterruptController, IrqHandler};
+use crate::core::memory::bus::Bus;
+use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 use std::cell::RefCell;
 use std::rc::Rc;
 use tracing::{debug, info, warn};
-use crate::core::interrupt::IrqHandler;
-use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 
 pub trait DmaDevice {
     // true if device is ready for DMA transfer
@@ -10,7 +12,7 @@ pub trait DmaDevice {
     // true if device requests a word now
     fn dma_request(&self) -> bool;
     // RAM -> device
-    fn dma_write(&mut self, word: u32);
+    fn dma_write(&mut self, word: u32,clock:&mut Clock,irq_handler:&mut IrqHandler);
     // device -> RAM
     fn dma_read(&mut self) -> u32;
 }
@@ -21,7 +23,7 @@ impl DmaDevice for DummyDMAChannel {
     fn dma_request(&self) -> bool {
         false
     }
-    fn dma_write(&mut self, _word: u32) {}
+    fn dma_write(&mut self, _word: u32,_clock:&mut Clock,_irq_handler:&mut IrqHandler) {}
     fn dma_read(&mut self) -> u32 {
         0
     }
@@ -175,7 +177,7 @@ impl DMAChannel {
         self.linked_list_header = None;
     }
 
-    fn do_dma<M : Memory>(&mut self,memory: &mut M) -> DMAResult {
+    fn do_dma(&mut self,bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
         // chcr: Bit 28 is automatically cleared upon BEGIN of the transfer, this bit needs to be set only in SyncMode=0 (setting it in other SyncModes would force the first block to be transferred instantly without DREQ, which isn't desired).
         if self.chcr & (1 << 28) != 0 {
             self.chcr &= !(1 << 28);
@@ -183,18 +185,18 @@ impl DMAChannel {
         match self.sync_mode {
             SyncMode::Manual => {
                 if self.id == 6 {
-                    self.do_dma_channel6_ot(memory)
+                    self.do_dma_channel6_ot(bus)
                 }
                 else {
-                    self.do_dma_manual(memory)
+                    self.do_dma_manual(bus,irq_handler)
                 }
             }
-            SyncMode::Slice => self.do_dma_slice(memory),
-            SyncMode::LinkedList => self.do_dma_linked_list(memory),
+            SyncMode::Slice => self.do_dma_slice(bus,irq_handler),
+            SyncMode::LinkedList => self.do_dma_linked_list(bus,irq_handler),
         }
     }
 
-    fn do_dma_channel6_ot<M : Memory>(&mut self,memory: &mut M) -> DMAResult {
+    fn do_dma_channel6_ot(&mut self, bus: &mut Bus) -> DMAResult {
         let chopping = (self.chcr & 0x100) != 0;
         if chopping {
             if self.chopping_window_words == 0 {
@@ -208,13 +210,13 @@ impl DMAChannel {
             }
         }
         if self.remaining_words == 1 {
-            memory.write::<32>(self.madr, 0xFF_FFFF);
+            bus.write::<32>(self.madr, 0xFF_FFFF);
             debug!("DMA OT last writing: {:08X}",self.madr);
         }
         else {
             let target = self.madr;
             self.madr = target.wrapping_sub(4) & 0xFF_FFFC;
-            match memory.write::<32>(target, self.madr) {
+            match bus.write::<32>(target, self.madr) {
                 WriteMemoryAccess::Write(_) => debug!("DMA OT writing: {:08X} = {:08X} remaining words={:4X}",target,self.madr,self.remaining_words),
                 _ => {
                     warn!("DMA Bus error while accessing address {:08X}",target);
@@ -243,7 +245,7 @@ impl DMAChannel {
             }
         }
     }
-    fn do_dma_manual<M : Memory>(&mut self,memory: &mut M) -> DMAResult {
+    fn do_dma_manual(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
         let chopping = (self.chcr & 0x100) != 0;
         if chopping {
             if self.chopping_window_words == 0 {
@@ -256,7 +258,7 @@ impl DMAChannel {
                 }
             }
         }
-        if !self.dma_read_write_word(memory) {
+        if !self.dma_read_write_word(bus,irq_handler) {
             return DMAResult::Paused;
         }
         self.remaining_words = self.remaining_words.wrapping_sub(1);
@@ -279,7 +281,7 @@ impl DMAChannel {
             }
         }
     }
-    fn dma_read_write_word<M : Memory>(&mut self,memory: &mut M) -> bool  {
+    fn dma_read_write_word(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> bool  {
         if !self.device.borrow().is_dma_ready() {
             return false;
         }
@@ -289,7 +291,7 @@ impl DMAChannel {
         match self.transfer_direction {
             TransferDirection::DeviceToRAM => {
                 let device_read = self.device.borrow_mut().dma_read();
-                match memory.write::<32>(target, device_read) {
+                match bus.write::<32>(target, device_read) {
                     WriteMemoryAccess::Write(_) => {}
                     _ => {
                         warn!("DMA Bus error while accessing address {:08X}",target);
@@ -298,8 +300,8 @@ impl DMAChannel {
                 }
             }
             TransferDirection::RAMToDevice => {
-                match memory.read::<32>(target,false) {
-                    ReadMemoryAccess::Read(mem_read,_) => self.device.borrow_mut().dma_write(mem_read),
+                match bus.read::<32>(target, false) {
+                    ReadMemoryAccess::Read(mem_read,_) => self.device.borrow_mut().dma_write(mem_read,bus.get_clock_mut(),irq_handler),
                     _ => {
                         warn!("DMA Bus error while accessing address {:08X}",target);
                         self.bus_error = true
@@ -309,7 +311,7 @@ impl DMAChannel {
         }
         true
     }
-    fn do_dma_slice<M : Memory>(&mut self,memory: &mut M) -> DMAResult {
+    fn do_dma_slice(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
         if self.waiting_next_block {
             // check if device has another block available
             if self.device.borrow().dma_request() {
@@ -320,7 +322,7 @@ impl DMAChannel {
                 return DMAResult::Paused;
             }
         }
-        if !self.dma_read_write_word(memory) {
+        if !self.dma_read_write_word(bus,irq_handler) {
             return DMAResult::Paused;
         }
         self.remaining_words = self.remaining_words.wrapping_sub(1);
@@ -337,7 +339,7 @@ impl DMAChannel {
 
         DMAResult::InProgress
     }
-    fn do_dma_linked_list<M : Memory>(&mut self,memory: &mut M) -> DMAResult {
+    fn do_dma_linked_list(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
         if self.transfer_direction != TransferDirection::RAMToDevice {
             panic!("DMA linked list set transfer to Device->RAM")
         }
@@ -345,7 +347,7 @@ impl DMAChannel {
         self.madr = if (self.chcr & 2) == 0 { self.madr.wrapping_add(4) } else { self.madr.wrapping_sub(4) };
         self.madr &= 0xFF_FFFC;
 
-        let word = match memory.read::<32>(target,false) {
+        let word = match bus.read::<32>(target, false) {
             ReadMemoryAccess::Read(mem_read,_) => mem_read,
             _ => {
                 self.bus_error = true;
@@ -366,7 +368,7 @@ impl DMAChannel {
                     if (next_node_address & 0x800000) != 0 { // TODO check
                         self.madr_read = next_node_address;
                         self.transfer_completed();
-                        info!("Linked List transfer completed");
+                        debug!("Linked List transfer completed");
                         return DMAResult::Finished;
                     }
                     self.madr = next_node_address;
@@ -381,7 +383,7 @@ impl DMAChannel {
         };
 
         // send word to device
-        self.device.borrow_mut().dma_write(word);
+        self.device.borrow_mut().dma_write(word,bus.get_clock_mut(),irq_handler);
         let extra_words = extra_words - 1;
         if extra_words == 0 {
             // The transfer is stopped once an end marker is reached. On some (earlier?) CPU revisions any address with bit 23 set will be interpreted as an end marker,
@@ -467,7 +469,7 @@ impl DMAChannel {
         self.update_chopping_windows();
         self.waiting_next_block = false;
         self.linked_list_header = None;
-        info!("Channel[{}] write control register: {:08X} direction={:?} syncMode={:?} active={} trigger={} remaining_words={:04X} remaining_blocks={:04X} madr={:08X}",self.id,value,self.transfer_direction,self.sync_mode,(value & (1 << 24)) != 0,(value & (1 << 28)) != 0,self.remaining_words,self.remaining_blocks,self.madr);
+        debug!("Channel[{}] write control register: {:08X} direction={:?} syncMode={:?} active={} trigger={} remaining_words={:04X} remaining_blocks={:04X} madr={:08X}",self.id,value,self.transfer_direction,self.sync_mode,(value & (1 << 24)) != 0,(value & (1 << 28)) != 0,self.remaining_words,self.remaining_blocks,self.madr);
     }
 
     fn update_chopping_windows(&mut self) {
@@ -633,16 +635,16 @@ impl DMAController {
         self.reg_fc = value;
     }
     
-    pub fn do_dma_for_cpu_cycles<M : Memory>(&mut self,cpu_cycles:usize,memory:&mut M,irq_handler:&mut IrqHandler) -> bool {
+    pub fn do_dma_for_cpu_cycles(&mut self,cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let mut dma_in_progress = false;
         for _ in 0..cpu_cycles {
-            dma_in_progress = self.do_dma(memory,irq_handler);
+            dma_in_progress = self.do_dma(bus,irq_handler);
         }
 
         dma_in_progress
     }
     #[inline]
-    fn do_dma<M : Memory>(&mut self,memory:&mut M,irq_handler:&mut IrqHandler) -> bool {
+    fn do_dma(&mut self,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let channel_in_progress = match self.dma_in_progress_on_channel {
             Some(channel_in_progress) if !self.dpcr_changed => channel_in_progress,
             _ => {
@@ -658,7 +660,7 @@ impl DMAController {
                         }
                         if self.channels[channel].is_ready() {
                             channel_found = Some(channel);
-                            info!("DMA found channel to activate: #{channel}");
+                            debug!("DMA found channel to activate: #{channel}");
                             break;
                         }
                     }
@@ -677,7 +679,7 @@ impl DMAController {
         };
 
         // do_dma
-        let dma_in_progress = match self.channels[channel_in_progress].do_dma::<M>(memory) {
+        let dma_in_progress = match self.channels[channel_in_progress].do_dma(bus,irq_handler) {
             DMAResult::InProgress => true,
             DMAResult::Paused => false,
             DMAResult::Finished => {

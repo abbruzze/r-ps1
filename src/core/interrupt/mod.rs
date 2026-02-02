@@ -17,9 +17,12 @@
 
 pub trait InterruptController {
     fn raise_hw_interrupts(&mut self,irqs:u16);
+    
+    fn raise_interrupt(&mut self,irq_type: InterruptType) {
+        let bit = (1 << irq_type as usize) as u16;
+        self.raise_hw_interrupts(bit);
+    }
 }
-
-pub trait InterruptProducer {}
 
 #[derive(Debug)]
 pub enum InterruptType {

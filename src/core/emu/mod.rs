@@ -113,7 +113,7 @@ impl Emulator {
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = true;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\RenderTexturePolygon15BPP.exe");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\hit-green.exe");
 
         self.just_entered_in_step_mode = false;
         self.run_mode = RunMode::FreeMode;
@@ -165,7 +165,7 @@ impl Emulator {
                     continue 'main_loop;
                 }
                 // DMA
-                dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus, &mut irq_handler);
+                dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
                 // IRQs
                 irq_handler.forward_to_controller(&mut self.bus);
             }

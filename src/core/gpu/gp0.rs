@@ -1,5 +1,7 @@
-use tracing::{debug, error, info, warn};
 use super::{Color, GP0Operation, Gp0State, SemiTransparency, TextureDepth, VRamCopyConfig, Vertex, GPU};
+use crate::core::clock::Clock;
+use crate::core::interrupt::{InterruptType, IrqHandler};
+use tracing::{debug, error, info, warn};
 
 const DITHER_TABLE: &[[i8; 4]; 4] = &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
 
@@ -66,7 +68,7 @@ impl GPU {
     GP0(E3h..E5h) do not take up space in the FIFO, so they are probably executed immediately (even if there're still other commands in the FIFO).
     Best use them only if you are sure that the FIFO is empty (otherwise the new Drawing Area settings might accidentally affect older Rendering Commands in the FIFO).
      */
-    pub fn gp0_cmd(&mut self,cmd:u32) {
+    pub fn gp0_cmd(&mut self,cmd:u32,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommand => {
                 debug!("GPU GP0 command {:08X}",cmd);
@@ -83,7 +85,7 @@ impl GPU {
                         else {
                             self.cmd_fifo.pop(); // remove command from FIFO
                         }
-                        operation(self,cmd);
+                        operation(self,cmd,interrupt_handler);
                     }
                     None => {
                         warn!("GPU GP0 unknown command {:08X}",cmd);
@@ -99,7 +101,7 @@ impl GPU {
                     self.gp0state = Gp0State::WaitingCommandParameters(operation,Some(pars - 1));
                 }
                 else {
-                    operation(self, cmd);
+                    operation(self, cmd,interrupt_handler);
                 }
             }
             Gp0State::WaitingPolyline(operation,arg_size,v,c,shaded,semi_transparency) => {
@@ -114,13 +116,13 @@ impl GPU {
                         self.gp0state = Gp0State::WaitingPolyline(operation,arg_size - 1,v,c,shaded,semi_transparency);
                     }
                     else {
-                        operation(self, cmd);
+                        operation(self, cmd,interrupt_handler);
                     }
                 }
             }
             Gp0State::VRamCopy(operation, config) => {
                 debug!("GPU GP0\tdata {:08X}",cmd);
-                operation(self, cmd);
+                operation(self, cmd,interrupt_handler);
                 match config.next() {
                     Some(next) => {
                         self.gp0state = Gp0State::VRamCopy(operation,next)
@@ -153,7 +155,7 @@ impl GPU {
     Bits 4 and 11 are the LSB and MSB of the 2-bit texture page Y coordinate. Normally only bit 4 is used as retail consoles only have 1 MB VRAM. Setting bit 11 (Y>=512) on a retail console with a v2 GPU will result in textures disappearing if 2 MB VRAM support was previously enabled using GP1(09h), as the VRAM chip select will no longer be active. Bit 11 is always ignored by v0 GPUs that do not support 2 MB VRAM.
     Note: GP0(00h) seems to be often inserted between Texpage and Rectangle commands, maybe it acts as a NOP, which may be required between that commands, for timing reasons...?
      */
-    pub(super) fn gp0_draw_mode_settings(&mut self,cmd:u32) {
+    pub(super) fn gp0_draw_mode_settings(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         self.texture.page_base_x = (cmd & 0xF) as u8;
         self.texture.page_base_y = ((cmd >> 4) & 0x1) as u8;
         self.semi_transparency = SemiTransparency::from_command(cmd);
@@ -204,7 +206,7 @@ impl GPU {
     y_offset >>= 3
     texture_window_prim = (0xE20 << 20) | (y_offset << 15) | (x_offset << 10) | (y_tiling_factor << 5) | x_tiling_factor
      */
-    pub(super) fn gp0_texture_window_settings(&mut self,cmd:u32) {
+    pub(super) fn gp0_texture_window_settings(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         self.texture.window_x_mask = (cmd & 0x1F) as u8;
         self.texture.window_y_mask = ((cmd >> 5) & 0x1F) as u8;
         self.texture.window_x_offset = ((cmd >> 10) & 0x1F) as u8;
@@ -222,12 +224,12 @@ impl GPU {
       24-31  Command  (Exh)
     Sets the drawing area corners. The Render commands GP0(20h..7Fh) are automatically clipping any pixels that are outside of this region.
      */
-    pub(super) fn gp0_set_drawing_area_top_left(&mut self,cmd:u32) {
+    pub(super) fn gp0_set_drawing_area_top_left(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         self.drawing_area.area_left = (cmd & 0x3FF) as u16;
         self.drawing_area.area_top = ((cmd >> 10) & 0x1FF) as u16;
         debug!("GP0(E3) Set drawing area top left drawing_area.area_left={} drawing_area.area_top={}",self.drawing_area.area_left,self.drawing_area.area_top);
     }
-    pub(super) fn gp0_set_drawing_area_bottom_right(&mut self,cmd:u32) {
+    pub(super) fn gp0_set_drawing_area_bottom_right(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         self.drawing_area.area_right = (cmd & 0x3FF) as u16;
         self.drawing_area.area_bottom = ((cmd >> 10) & 0x1FF) as u16;
         debug!("GP0(E4) Set drawing area bottom right drawing_area.area_right={} drawing_area.area_bottom={}",self.drawing_area.area_right,self.drawing_area.area_bottom);
@@ -240,7 +242,7 @@ impl GPU {
       24-31  Command  (E5h)
     If you have configured the GTE to produce vertices with coordinate "0,0" being located in the center of the drawing area, then the Drawing Offset must be "X1+(X2-X1)/2, Y1+(Y2-Y1)/2". Or, if coordinate "0,0" shall be the upper-left of the Drawing Area, then Drawing Offset should be "X1,Y1". Where X1,Y1,X2,Y2 are the values defined with GP0(E3h-E4h).
      */
-    pub(super) fn gp0_set_drawing_offset(&mut self,cmd:u32) {
+    pub(super) fn gp0_set_drawing_offset(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         self.drawing_area.x_offset = (((cmd & 0x7FF) << 5) as i16) >> 5;
         self.drawing_area.y_offset = ((((cmd >> 11) & 0x7FF) << 5) as i16) >> 5;
         debug!("GP0(E5) Set drawing offset drawing_area.x_offset={} drawing_area.y_offset={}",self.drawing_area.x_offset,self.drawing_area.y_offset);
@@ -256,7 +258,7 @@ impl GPU {
     The mask setting affects all rendering commands, as well as CPU-to-VRAM and VRAM-to-VRAM transfer commands (where it acts on the separate halfwords, ie. as for 15bit textures). However, Mask does NOT affect the Fill-VRAM command.
     This setting is used in games such as Metal Gear Solid and Silent Hill.
      */
-    pub(super) fn gp0_mask_bit_settings(&mut self,cmd:u32) {
+    pub(super) fn gp0_mask_bit_settings(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
         self.force_set_mask_bit = (cmd & 1) != 0;
         self.preserve_masked_pixels = (cmd & 2) != 0;
         debug!("GP0(E6) Mask bit settings force_set_mask_bit={} preserve_masked_pixels={}",self.force_set_mask_bit,self.preserve_masked_pixels);
@@ -375,7 +377,7 @@ impl GPU {
       4th  Width+Height      (YsizXsizh)  ;Xsiz counted in halfwords
     Copies data within framebuffer. The transfer is affected by Mask setting.
      */
-    fn operation_vram_vram_copy(&mut self,_cmd:u32) {
+    fn operation_vram_vram_copy(&mut self,_cmd:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(3));
@@ -467,7 +469,7 @@ impl GPU {
      Transfers data from CPU to frame buffer. If the number of halfwords to be sent is odd, an extra halfword should be sent, as packets consist of 32bits words.
      The transfer is affected by Mask setting.
      */
-    fn operation_cpu_to_vram_copy(&mut self, word:u32) {
+    fn operation_cpu_to_vram_copy(&mut self, word:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation,None) => {
                 self.gp0state = Gp0State::WaitingCommandParameters(operation,Some(2));
@@ -486,7 +488,7 @@ impl GPU {
             _ => {}
         }
     }
-    fn operation_vram_to_cpu_copy(&mut self,_cmd:u32) {
+    fn operation_vram_to_cpu_copy(&mut self,_cmd:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation,None) => {
                 self.gp0state = Gp0State::WaitingCommandParameters(operation,Some(2));
@@ -498,11 +500,13 @@ impl GPU {
             _ => {}
         }
     }
-    fn operation_nop(&mut self,_cmd:u32) {
+    fn operation_nop(&mut self,_cmd:u32,_irq_handler:&mut IrqHandler) {
         self.cmd_fifo.pop(); // discard command
     }
-    fn operation_flush_texture_cache(&mut self,cmd:u32) {
-
+    fn operation_flush_texture_cache(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
+        // TODO: implement texture cache flushing
+        self.cmd_fifo.pop(); // discard command
+        debug!("GPU GP0 Flush Texture Cache command {:08X} - not implemented",cmd);
     }
     /*
     Quick Rectangle Fill
@@ -514,7 +518,7 @@ impl GPU {
     Rectangle filling is not affected by the GP0(E6h) mask setting, acting as if GP0(E6h).0 and GP0(E6h).1 are both zero.
     This command is typically used to do a quick clear, as it'll be faster to run than an equivalent Render Rectangle command.
      */
-    fn operation_quick_vram_fill(&mut self,_cmd:u32) {
+    fn operation_quick_vram_fill(&mut self,_cmd:u32,_irq_handler:&mut IrqHandler) {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(2));
@@ -545,8 +549,9 @@ impl GPU {
     Requests IRQ1. Can be acknowledged via GP1(02h). This feature is rarely used.
     Note: The command is used by Blaze'n'Blade, but the game doesn't have IRQ1 enabled, and the written value (1F801810h) looks more like an I/O address, rather than like a command, so not sure if it's done intentionally, or if it is just a bug.
      */
-    fn gp0_set_irq(&mut self,_cmd:u32) {
+    fn gp0_set_irq(&mut self,_cmd:u32,irq_handler:&mut IrqHandler) {
         self.irq = true;
+        irq_handler.set_irq(InterruptType::GPU);
         debug!("GP0 IRQ Request");
     }
 }
