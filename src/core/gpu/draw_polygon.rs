@@ -25,6 +25,7 @@ struct Polygon {
     texture: Option<PolygonTexture>,
 }
 
+#[cfg(not(feature = "draw_polygon_bounding_box"))]
 #[derive(Debug,Clone,Default)]
 struct ColorFixed {
     r: i32,
@@ -32,6 +33,7 @@ struct ColorFixed {
     b: i32,
 }
 
+#[cfg(not(feature = "draw_polygon_bounding_box"))]
 impl ColorFixed {
     fn from_color(color:&Color) -> ColorFixed {
         ColorFixed {
@@ -49,6 +51,7 @@ impl ColorFixed {
     }
 }
 
+#[cfg(not(feature = "draw_polygon_bounding_box"))]
 const FP_BITS: usize = 16;
 
 impl GPU {
@@ -171,12 +174,19 @@ impl GPU {
                                     0 => TextureDepth::T4Bit,
                                     1 => TextureDepth::T8Bit,
                                     2 => TextureDepth::T15Bit,
+                                    3 => TextureDepth::Reserved,
                                     _ => unreachable!()
                                 };
                                 texture.page_base_x = page_base_x;
                                 texture.page_base_y = page_base_y;
                                 texture.texture_depth = texture_depth;
                                 texture.semi_transparency = semi_transparency;
+                                // update gloabl texture info
+                                self.texture.page_base_x = page_base_x;
+                                self.texture.page_base_y = page_base_y;
+                                self.texture.depth = texture_depth;
+                                self.semi_transparency = semi_transparency;
+                                //self.dithering = is_gouraud || (is_textured && !raw_texture);
                             }
                             _ => {}
                         }
@@ -184,6 +194,7 @@ impl GPU {
                     polygon.vertex.push((vertex,color,uv));
                     word_index += 1;
                 }
+
                 self.draw_polygon(&polygon,is_gouraud,is_textured,semi_transparent,raw_texture);
                 self.gp0state = Gp0State::WaitingCommand;
             }
@@ -193,13 +204,14 @@ impl GPU {
 
     fn draw_polygon(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
         debug!("Drawing polygon: {:?} gouraud={is_gouraud} textured={is_textured} semi_transparent={is_semi_transparent} raw_texture={is_raw_texture}",polygon);
-        self.draw_triangle_bounding_box::<0>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
+        self.draw_triangle::<0>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
         if polygon.vertex.len() == 4 {
-            self.draw_triangle_bounding_box::<1>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
+            self.draw_triangle::<1>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
         }
     }
 
     #[inline]
+    #[cfg(not(feature = "draw_polygon_bounding_box"))]
     fn interpolate_fp(a: u32, b: u32, t: i32, dt: i32) -> i32 {
         if dt == 0 {
             a as i32
@@ -208,8 +220,8 @@ impl GPU {
             v as i32
         }
     }
-
-    fn draw_triangle_upper_lower<const OFFSET : usize>(&mut self, polygon:&Polygon, is_gouraud:bool, is_textured:bool, is_semi_transparent:bool, is_raw_texture:bool) {
+    #[cfg(not(feature = "draw_polygon_bounding_box"))]
+    fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon, is_gouraud:bool, is_textured:bool, is_semi_transparent:bool, is_raw_texture:bool) {
         let v0 = &polygon.vertex[0 + OFFSET];
         let v1 = &polygon.vertex[1 + OFFSET];
         let v2 = &polygon.vertex[2 + OFFSET];
@@ -400,11 +412,13 @@ impl GPU {
         }
     }
 
+    #[cfg(feature = "draw_polygon_bounding_box")]
     #[inline(always)]
     fn edge_function(a: &Vertex, b: &Vertex, c: &Vertex) -> i32 {
         (b.x as i32 - a.x as i32) * (c.y as i32 - a.y as i32) - (b.y as i32 - a.y as i32) * (c.x as i32 - a.x as i32)
     }
 
+    #[cfg(feature = "draw_polygon_bounding_box")]
     #[inline(always)]
     fn is_top_left(a: &Vertex, b: &Vertex) -> bool {
         let dy = b.y - a.y;
@@ -413,7 +427,8 @@ impl GPU {
         (dy < 0) || (dy == 0 && dx < 0)
     }
 
-    fn draw_triangle_bounding_box<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
+    #[cfg(feature = "draw_polygon_bounding_box")]
+    fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
         let a = &polygon.vertex[0 + OFFSET];
         let b = &polygon.vertex[1 + OFFSET];
         let c = &polygon.vertex[2 + OFFSET];

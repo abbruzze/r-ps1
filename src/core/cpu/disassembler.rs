@@ -2,7 +2,6 @@ use crate::core::cpu::cop0::COP0_REGISTER_ALIASES;
 use crate::core::cpu::cop2::{COP2_CONTROL_REGISTER_ALIASES, COP2_DATA_REGISTER_ALIASES};
 use crate::core::cpu::instruction::Instruction;
 use crate::core::cpu::instruction::Opcode;
-use crate::core::cpu::instruction::Opcode::SRL;
 
 #[derive(Debug)]
 pub struct Disassembled {

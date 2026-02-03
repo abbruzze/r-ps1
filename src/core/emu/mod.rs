@@ -19,10 +19,15 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use std::{fs, thread};
 use thread::spawn;
+use build_time::build_time_local;
 use tracing::{error, info};
 
 const THROTTLE_RES : u64 = 100;
 const THROTTLE_ADJ_FACTOR : f32 = 1.8;
+
+pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
+pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
+pub const EMU_BUILD_DATE_TIME : &str = build_time_local!("%d/%m/%Y %H:%M:%S");
 
 pub struct Emulator {
     cpu: Cpu,

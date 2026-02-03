@@ -163,25 +163,23 @@ impl GPU {
             0 => TextureDepth::T4Bit,
             1 => TextureDepth::T8Bit,
             2 => TextureDepth::T15Bit,
-            3 => {
-                warn!("GPU gp0 draw mode settings with texture page colors with value 3 (reserved). Default to 2");
-                TextureDepth::T15Bit
-            }
+            3 => TextureDepth::Reserved,
             _ => unreachable!()
         };
         self.dithering = ((cmd >> 9) & 1) != 0;
         self.drawing_area.draw_to_display = ((cmd >> 10) & 1) != 0;
-        self.texture.disabled = ((cmd >> 11) & 1) != 0; // only for V2
+        //self.texture.disabled = ((cmd >> 11) & 1) != 0; // only for V2
         self.texture.rectangle_x_flip = ((cmd >> 12) & 1) != 0;
         self.texture.rectangle_y_flip = ((cmd >> 13) & 1) != 0;
-        debug!("GP0(E1) Draw mode settings texture.page_base_x={:02X} texture.page_base_y={:02X} semi_transparency={:?} texture.depth={:?} dithering={} drawing_area.draw_to_display={} texture.disabled={} texture.rectangle_x_flip={} texture.rectangle_y_flip={}",
+        debug!("GP0(E1){:04X} Draw mode settings texture.page_base_x={:02X} texture.page_base_y={:02X} semi_transparency={:?} texture.depth={:?} dithering={} drawing_area.draw_to_display={} texture.rectangle_x_flip={} texture.rectangle_y_flip={}",
+            cmd,
             self.texture.page_base_x,
             self.texture.page_base_y,
             self.semi_transparency,
             self.texture.depth,
             self.dithering,
             self.drawing_area.draw_to_display,
-            self.texture.disabled,
+            //self.texture.disabled,
             self.texture.rectangle_x_flip,
             self.texture.rectangle_y_flip
         );
@@ -308,7 +306,7 @@ impl GPU {
 
     #[inline(always)]
     pub(super) fn draw_pixel(&mut self,v:&Vertex,color:&Color,semi_transparent:bool,semi_transparency: Option<SemiTransparency>,allow_dithering:bool) {
-        if v.is_inside_drawing_area(&self.drawing_area) {
+        if /*self.drawing_area.draw_to_display &&*/ v.is_inside_drawing_area(&self.drawing_area) {
             let color = if allow_dithering && self.dithering {
                 let dither_value = DITHER_TABLE[(v.y & 3) as usize][(v.x & 3) as usize];
                 color.dither(dither_value)
@@ -361,7 +359,7 @@ impl GPU {
 
                 self.vram[clut_addr] as u16 | ((self.vram[clut_addr + 1] as u16) << 8)
             }
-            TextureDepth::T15Bit => {
+            TextureDepth::T15Bit | TextureDepth::Reserved => {
                 let vram_x_pixels = (((texture_page_x as u32) << 6) + u) & 0x3FF;
                 let byte_offset = (((y << 10) + vram_x_pixels) as usize) << 1;
                 self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8)

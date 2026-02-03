@@ -21,7 +21,7 @@ pub struct DummyDMAChannel {}
 impl DmaDevice for DummyDMAChannel {
     fn is_dma_ready(&self) -> bool { true }
     fn dma_request(&self) -> bool {
-        false
+        true
     }
     fn dma_write(&mut self, _word: u32,_clock:&mut Clock,_irq_handler:&mut IrqHandler) {}
     fn dma_read(&mut self) -> u32 {

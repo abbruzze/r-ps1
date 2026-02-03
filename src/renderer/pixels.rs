@@ -12,8 +12,8 @@ use winit::window::{Window, WindowId};
 use crate::core::config::Config;
 
 const DEFAULT_WIDTH: usize = 640;
-const DEFAULT_HEIGHT: usize = 480;
-const DEFAULT_SCALE: usize = 2;
+const DEFAULT_HEIGHT: usize = 263 * 2;
+const DEFAULT_SCALE: usize = 1;
 
 const FPS_PERIOD : f64 = 2.0;
 

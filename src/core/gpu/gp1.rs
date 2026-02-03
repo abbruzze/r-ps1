@@ -238,6 +238,6 @@ impl GPU {
     }
 
     pub(super) fn gp1_not_implemented(&mut self,_cmd:u32) {
-        warn!("GPU command not implemented!!");
+        warn!("GP1 command not implemented!!");
     }
 }

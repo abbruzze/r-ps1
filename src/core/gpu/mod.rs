@@ -147,6 +147,8 @@ enum TextureDepth {
     T8Bit,
     // 15 bits per pixel
     T15Bit,
+    // same as T15Bit
+    Reserved,
 }
 
 impl Default for TextureDepth {
@@ -161,8 +163,6 @@ struct Texture {
     page_base_x: u8,
     /// Texture page base Y coordinate (1bit, 256 line increment)
     page_base_y: u8,
-    /// When true all textures are disabled
-    disabled: bool,
     /// Texture page color depth
     depth: TextureDepth,
     /// Mirror textured rectangles along the x-axis
@@ -238,9 +238,10 @@ impl DisplayConfig {
         if self.interlaced {
             height <<= 1;
         }
-        else if !self.interlaced && height > 240 {
-            height >>= 1;
-        }
+        // TODO check how to handle height limits
+        // else if !self.interlaced && height > 240 {
+        //     height = 240;
+        // }
         (width,height)
     }
 }
@@ -275,12 +276,16 @@ impl VideoHorizontalResolution {
         VideoHorizontalResolution(hres)
     }
 
+    /*
+     16    Horizontal Resolution 2     (0=256/320/512/640, 1=368)    ;GP1(08h).6
+     17-18 Horizontal Resolution 1     (0=256, 1=320, 2=512, 3=640)  ;GP1(08h).0-1
+     */
     fn to_status(&self) -> u32 {
         match self.0 {
-            256 => 0,
-            320 => 2,
-            512 => 4,
-            640 => 6,
+            256 => 0 | 0 << 1,
+            320 => 0 | 1 << 1,
+            512 => 0 | 2 << 1,
+            640 => 0 | 3 << 1,
             368 => 1,
             _ => unreachable!()
         }
@@ -789,7 +794,7 @@ impl GPU {
         st |= (self.preserve_masked_pixels as u32) << 12;
         st |= (self.display_config.field as u32) << 13;
         st |= (self.reverse_flag as u32) << 14;
-        st |= (self.texture.disabled as u32) << 15;
+        st |= 0 << 15; // forced
         st |= self.display_config.h_res.to_status() << 16;
         st |= (self.display_config.v_res as u32) << 19;
         st |= (self.display_config.video_mode as u32) << 20;
@@ -817,7 +822,7 @@ impl GPU {
 
         st |= bit31 << 31;
 
-        //info!("Reading GPUSTAT: {:08X}",st);
+        //info!("Reading GPUSTAT: {:08X} {}",st,self.display_config.h_res.to_status());
         st
     }
 
@@ -833,6 +838,9 @@ impl GPU {
                         self.gp0state = Gp0State::VRamCopy(operation,next)
                     }
                     None => {
+                        if (config.width & 1) == 1 {
+                            self.gpu_read_register &= 0xFFFF; // remove upper halfword if width is odd
+                        }
                         debug!("VRam->Cpu operation terminated.");
                         self.ready_bits.ready_to_send_vram_to_cpu = false;
                         self.gp0state = Gp0State::WaitingCommand;
