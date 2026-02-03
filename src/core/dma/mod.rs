@@ -1,5 +1,5 @@
 use crate::core::clock::Clock;
-use crate::core::interrupt::{InterruptController, IrqHandler};
+use crate::core::interrupt::{InterruptController, InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 use std::cell::RefCell;
@@ -33,7 +33,8 @@ impl DmaDevice for DummyDMAChannel {
 enum SyncMode {
     Manual,
     Slice,
-    LinkedList
+    LinkedList,
+    Reserved,
 }
 
 impl SyncMode {
@@ -45,6 +46,8 @@ impl SyncMode {
             1 => SyncMode::Slice,
             // Used to transfer GPU command lists
             2 => SyncMode::LinkedList,
+            // Reserved
+            3 => SyncMode::Reserved,
             _ => unreachable!()
         }
     }
@@ -69,7 +72,12 @@ enum DMAResult {
     InProgress,
     Paused,
     Finished,
-    BlockFinished,
+    BlockFinished(bool), // true = last block finished
+}
+
+enum IrqDMAType {
+    EntireTransferComplete,
+    BlockComplete,
 }
 
 /*
@@ -185,37 +193,34 @@ impl DMAChannel {
         match self.sync_mode {
             SyncMode::Manual => {
                 if self.id == 6 {
-                    self.do_dma_channel6_ot(bus)
+                    if matches!(self.transfer_direction,TransferDirection::DeviceToRAM) {
+                        self.do_dma_channel6_ot(bus)
+                    }
+                    else {
+                        warn!("DMA OT wrong direction (RAM->DEVICE)");
+                        DMAResult::Finished
+                    }
+
                 }
                 else {
                     self.do_dma_manual(bus,irq_handler)
                 }
             }
             SyncMode::Slice => self.do_dma_slice(bus,irq_handler),
-            SyncMode::LinkedList => self.do_dma_linked_list(bus,irq_handler),
+            SyncMode::LinkedList | SyncMode::Reserved => self.do_dma_linked_list(bus,irq_handler),
         }
     }
 
     fn do_dma_channel6_ot(&mut self, bus: &mut Bus) -> DMAResult {
-        let chopping = (self.chcr & 0x100) != 0;
-        if chopping {
-            if self.chopping_window_words == 0 {
-                self.chopping_window_cycles -= 1;
-                if self.chopping_window_cycles == 0 {
-                    self.update_chopping_windows();
-                }
-                else {
-                    return DMAResult::Paused
-                }
-            }
-        }
+        // chopping is not supported
         if self.remaining_words == 1 {
             bus.write::<32>(self.madr, 0xFF_FFFF);
             debug!("DMA OT last writing: {:08X}",self.madr);
         }
         else {
             let target = self.madr;
-            self.madr = target.wrapping_sub(4) & 0xFF_FFFC;
+            self.madr = if (self.chcr & 2) == 0 { self.madr.wrapping_add(4) } else { self.madr.wrapping_sub(4) };
+            self.madr &= 0xFF_FFFC;
             match bus.write::<32>(target, self.madr) {
                 WriteMemoryAccess::Write(_) => debug!("DMA OT writing: {:08X} = {:08X} remaining words={:4X}",target,self.madr,self.remaining_words),
                 _ => {
@@ -231,18 +236,7 @@ impl DMAChannel {
             DMAResult::Finished
         }
         else {
-            if chopping {
-                self.chopping_window_words -= 1;
-                if self.chopping_window_words == 0 {
-                    DMAResult::Paused
-                }
-                else {
-                    DMAResult::InProgress
-                }
-            }
-            else {
-                DMAResult::InProgress
-            }
+            DMAResult::InProgress
         }
     }
     fn do_dma_manual(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
@@ -330,11 +324,11 @@ impl DMAChannel {
             self.remaining_blocks = self.remaining_blocks.wrapping_sub(1);
             if self.remaining_blocks == 0 {
                 self.transfer_completed();
-                return DMAResult::Finished
+                return DMAResult::BlockFinished(true)
             }
             self.update_remaining_blocks_words(true);
             self.waiting_next_block = true;
-            return DMAResult::BlockFinished;
+            return DMAResult::BlockFinished(false);
         };
 
         DMAResult::InProgress
@@ -413,7 +407,7 @@ impl DMAChannel {
         let ready = match self.sync_mode {
             SyncMode::Manual => trigger && active,
             SyncMode::Slice => active,
-            SyncMode::LinkedList => active
+            SyncMode::LinkedList | SyncMode::Reserved => active
         };
 
         self.enabled & ready
@@ -442,7 +436,7 @@ impl DMAChannel {
             SyncMode::Slice => {
                 self.bcr & 0xFFFF | (self.remaining_blocks as u32) << 16
             }
-            SyncMode::LinkedList => self.bcr,
+            SyncMode::LinkedList | SyncMode::Reserved => self.bcr,
         }
     }
     fn write_bcr(&mut self,value:u32) {
@@ -455,11 +449,12 @@ impl DMAChannel {
     }
     fn write_chcr(&mut self, value:u32) {
         self.chcr = value;
+        let chopping = (self.chcr & 0x100) != 0;
         // For DMA6/OTC there are some restrictions, D6_CHCR has only three read/write-able bits: 24,28,30.
         // All other bits are read-only: bit 1 is always 1 (increment=-4), and the other bits are always 0.
         if self.id == 6 {
             self.chcr &= (1 << 24) | (1 << 28) | (1 << 30);
-            self.chcr |= 2
+            self.chcr |= 2;
         }
 
         self.sync_mode = SyncMode::from_chcr(self.chcr);
@@ -469,7 +464,7 @@ impl DMAChannel {
         self.update_chopping_windows();
         self.waiting_next_block = false;
         self.linked_list_header = None;
-        debug!("Channel[{}] write control register: {:08X} direction={:?} syncMode={:?} active={} trigger={} remaining_words={:04X} remaining_blocks={:04X} madr={:08X}",self.id,value,self.transfer_direction,self.sync_mode,(value & (1 << 24)) != 0,(value & (1 << 28)) != 0,self.remaining_words,self.remaining_blocks,self.madr);
+        debug!("Channel[{}] write control register: {:08X} direction={:?} syncMode={:?} active={} trigger={} remaining_words={:04X} remaining_blocks={:04X} madr={:08X} chopping={chopping}",self.id,value,self.transfer_direction,self.sync_mode,(value & (1 << 24)) != 0,(value & (1 << 28)) != 0,self.remaining_words,self.remaining_blocks,self.madr);
     }
 
     fn update_chopping_windows(&mut self) {
@@ -492,7 +487,7 @@ impl DMAChannel {
                     self.remaining_blocks = (self.bcr >> 16) as u16;
                 }
             }
-            SyncMode::LinkedList => {
+            SyncMode::LinkedList | SyncMode::Reserved => {
                 self.remaining_words = 0;
                 self.remaining_blocks = 0;
             }
@@ -518,17 +513,6 @@ impl DMAChannel {
   28-30 CPU memory access priority  (0..7; 0=Highest, 7=Lowest)
   31    No effect, should be CPU memory access enable (R/W)
 
-1F8010F4h - DICR - DMA Interrupt Register (R/W)
-  0-6   Controls channel 0-6 completion interrupts in bits 24-30.
-        When 0, an interrupt only occurs when the entire transfer completes.
-        When 1, interrupts can occur for every slice and linked-list transfer.
-        No effect if the interrupt is masked by bits 16-22.
-  7-14  Unused
-  15    Bus error flag. Raised when transferring to/from an address outside of RAM. Forces bit 31. (R/W)
-  16-22 Channel 0-6 interrupt mask. If enabled, channels cause interrupts as per bits 0-6.
-  23    Master channel interrupt enable.
-  24-30 Channel 0-6 interrupt flags. (R, write 1 to reset)
-  31    Master interrupt flag (R)
  */
 pub struct DMAController {
     channels: [DMAChannel; 7],
@@ -590,14 +574,79 @@ impl DMAController {
 
     pub fn read_dicr(&self) -> u32 {
         let mut dcir = self.dcir & !(0x7F << 24); // clear 24-30 bits
-        dcir |= (self.irq_flags as u32) << 16;
+        dcir |= (self.irq_flags as u32) << 24;
         // Bit 31 is a simple readonly flag that follows the following rules:
         //   IF b15=1 OR (b23=1 AND (b16-22 AND b24-30)>0) THEN b31=1 ELSE b31=0
-        let irq_mask = ((dcir >> 16) & 0x7F) as u8;
-        let b31_cond = (dcir & (1 << 15) != 0) || ((dcir & (1 << 23) != 0) && (irq_mask & self.irq_flags) != 0);
+        let b31_cond = (dcir & (1 << 15) != 0) || (self.is_irq_master_enabled() && self.is_irq_pending());
         dcir | (b31_cond as u32) << 31
     }
 
+    #[inline]
+    fn irq_mask(&self) -> u8 {
+        // 16-22 Channel 0-6 interrupt mask. If enabled, channels cause interrupts as per bits 0-6.
+        ((self.dcir >> 16) & 0x7F) as u8
+    }
+
+    #[inline]
+    fn irq_control_channel(&self,channel:usize) -> IrqDMAType {
+        if self.dcir & (1 << channel) != 0 {
+            IrqDMAType::BlockComplete
+        }
+        else {
+            IrqDMAType::EntireTransferComplete
+        }
+    }
+
+    #[inline]
+    fn is_irq_channel_enabled(&self,channel:usize) -> bool {
+        (self.irq_mask() & (1 << channel)) != 0
+    }
+
+    #[inline]
+    fn is_irq_master_enabled(&self) -> bool {
+        self.dcir & (1 << 23) != 0
+    }
+
+    #[inline]
+    fn is_irq_pending(&self) -> bool {
+        self.is_irq_master_enabled() && (self.irq_mask() & self.irq_flags) != 0
+    }
+
+    #[inline]
+    fn set_irq_for_channel(&mut self,channel:usize) {
+        self.irq_flags |= 1 << channel
+    }
+
+    #[inline]
+    fn check_irq(&self,irq_handler:&mut IrqHandler) {
+        if self.is_irq_pending() {
+            irq_handler.set_irq(InterruptType::DMA);
+        }
+    }
+
+    #[inline]
+    fn set_bus_error(&mut self) {
+        self.dcir |= 1 << 15;
+    }
+
+    /*
+    1F8010F4h - DICR - DMA Interrupt Register (R/W)
+      0-6   Controls channel 0-6 completion interrupts in bits 24-30.
+            When 0, an interrupt only occurs when the entire transfer completes.
+            When 1, interrupts can occur for every slice and linked-list transfer.
+            No effect if the interrupt is masked by bits 16-22.
+      7-14  Unused
+      15    Bus error flag. Raised when transferring to/from an address outside of RAM. Forces bit 31. (R/W)
+      16-22 Channel 0-6 interrupt mask. If enabled, channels cause interrupts as per bits 0-6.
+      23    Master channel interrupt enable.
+      24-30 Channel 0-6 interrupt flags. (R, write 1 to reset)
+      31    Master interrupt flag (R)
+    IRQ flags in bit (24+n) are set upon DMAn completion - but caution - they are set ONLY if enabled in bit (16+n) (unlike interrupt flags in I_STAT, which are always set regardless of whether the respective IRQ is masked).
+    Bit 31 is a simple readonly flag that follows the following rules:
+      IF b15=1 OR (b23=1 AND (b16-22 AND b24-30)>0) THEN b31=1 ELSE b31=0
+    Upon 0-to-1 transition of Bit 31, the IRQ3 flag in I_STAT gets set.
+    Bits 24-30 are acknowledged (reset to zero) when writing a "1" to that bits (and additionally, IRQ3 must be acknowledged via I_STAT).
+     */
     pub fn write_dicr(&mut self,value:u32) {
         self.dcir = value & 0x7FFFFFFF; // 31    Master interrupt flag (R)
         self.irq_flags &= !((value >> 24) & 0x7F) as u8; // 24-30 Channel 0-6 interrupt flags. (R, write 1 to reset)
@@ -679,21 +728,34 @@ impl DMAController {
         };
 
         // do_dma
-        let dma_in_progress = match self.channels[channel_in_progress].do_dma(bus,irq_handler) {
+        let dma_result = self.channels[channel_in_progress].do_dma(bus,irq_handler);
+        // check bus error
+        if self.channels[channel_in_progress].get_bus_error() {
+            self.set_bus_error();
+        }
+        let dma_in_progress = match dma_result {
             DMAResult::InProgress => true,
             DMAResult::Paused => false,
             DMAResult::Finished => {
-                // TODO IRQ
+                if matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete) && self.is_irq_channel_enabled(channel_in_progress) {
+                    self.set_irq_for_channel(channel_in_progress);
+                    self.check_irq(irq_handler);
+                }
                 self.dma_in_progress_on_channel = None;
                 false
             }
-            DMAResult::BlockFinished => {
-                // TODO IRQ
+            DMAResult::BlockFinished(last_block) => {
+                if matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete) && self.is_irq_channel_enabled(channel_in_progress) {
+                    self.set_irq_for_channel(channel_in_progress);
+                    self.check_irq(irq_handler);
+                }
+
+                if last_block {
+                    self.dma_in_progress_on_channel = None;
+                }
                 false
             }
         };
-
-        // TODO check bus error
 
         dma_in_progress
     }

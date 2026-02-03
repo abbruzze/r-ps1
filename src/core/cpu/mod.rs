@@ -612,7 +612,7 @@ impl Cpu {
                     return self.op_cycles;
                 }
             }
-            else if dma_in_progress {
+            if dma_in_progress {
                 // During DMA, any read access from RAM or I/O registers or filling more than 4 entries into the write queue will stall the CPU until the DMA is finished.
                 match memory::get_memory_section(target_address) {
                     MemorySection::IOPorts | MemorySection::MainRAM => {
@@ -664,7 +664,7 @@ impl Cpu {
 
         // execute instruction
         if let Err(ex) = self.op_functions[opcode as usize](self,memory,&i,use_write_cache) {
-            self.handle_exception(memory, ex, was_in_branch_delay_slot, self.branch_address, i.0)
+            self.handle_exception(memory, ex, was_in_branch_delay_slot, self.branch_address,self.last_opcode)
         }
         else {
             self.pc = next_pc;
@@ -1506,6 +1506,13 @@ impl Cpu {
     }
 
     fn op_lwc<const N:usize>(&mut self,memory:&mut Bus,instr: &Instruction,_use_write_cache:bool) -> OperationException {
+        let target = self.get_read_write_memory_address(instr);
+        // word alignment check
+        if (target & 3) != 0 {
+            return Err(CpuException::AddressErrorLoad(target))
+        }
+        let read = self.read_data_memory::<32>(memory,target)?;
+
         if N != 2 {
             error!("Unsupported LWC{} operation",N);
             if !memory.get_cop0().is_cop_enabled(N) {
@@ -1516,18 +1523,19 @@ impl Cpu {
         if !memory.get_cop0().is_cop_enabled(N) {
             return Err(CpuException::CoprocessorUnusable(N))
         }
-        let target = self.get_read_write_memory_address(instr);
-        // word alignment check
-        if (target & 3) != 0 {
-            return Err(CpuException::AddressErrorLoad(target))
-        }
-        let read = self.read_data_memory::<32>(memory,target)?;
+
         let CopResult(_,penalty) = self.cop2.write_data_register(instr.rt(), read);
         self.op_cycles += penalty;
         Ok(())
     }
 
     fn op_swc<const N:usize>(&mut self,memory:&mut Bus,instr:&Instruction,use_write_cache:bool) -> OperationException {
+        let target = self.get_read_write_memory_address(instr);
+        // word alignment check
+        if (target & 3) != 0 {
+            return Err(CpuException::AddressErrorStore(target))
+        }
+
         if N != 2 {
             error!("Unsupported SWC{} operation",N);
             if !memory.get_cop0().is_cop_enabled(N) {
@@ -1538,11 +1546,7 @@ impl Cpu {
         if !memory.get_cop0().is_cop_enabled(N) {
             return Err(CpuException::CoprocessorUnusable(N))
         }
-        let target = self.get_read_write_memory_address(instr);
-        // word alignment check
-        if (target & 3) != 0 {
-            return Err(CpuException::AddressErrorLoad(target))
-        }
+
         let CopResult(data,penalty) = self.cop2.read_data_register(instr.rt());
         self.op_cycles += penalty;
         self.write_data_memory::<32>(memory,target,data,use_write_cache)

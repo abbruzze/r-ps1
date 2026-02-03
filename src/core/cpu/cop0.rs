@@ -215,7 +215,8 @@ impl Cop0 {
         self.regs[Cop0Reg::EPC as usize] = pc_to_save;
 
         // update CAUSE
-        self.regs[Cop0Reg::CAUSE as usize] &= 0xFF00;
+        self.regs[Cop0Reg::CAUSE as usize] &= 0xFF00; // clear first byte
+        self.regs[Cop0Reg::CAUSE as usize] &= !(0xF << 28); // clear 28-31 bits
 
         // ExcCode (bit 2-6)
         self.regs[Cop0Reg::CAUSE as usize] |= (exception.id() as u32) << 2;
@@ -232,8 +233,20 @@ impl Cop0 {
             };
         }
         // 28-29 CE     Opcode Bit26-27 (aka coprocessor number in case of COP opcodes)
-        let cop_num = (opcode >> 26) & 3;
-        self.regs[Cop0Reg::CAUSE as usize] |= cop_num << 28;
+        let op = opcode >> 26;
+        // from psxtest_cpx.exe seems that these opcodes are releted to COPn and
+        // even if no exception 11 has been raised the CE bits must be set
+        match op {
+            0x10 | 0x11 | 0x12 | 0x13 | 0x15 | 0x16 | 0x17 | 0x19 |
+            0x1A | 0x1B | 0x1D | 0x1E | 0x1F | 0x27 | 0x2D | 0x2F |
+            0x30 | 0x31 | 0x32 | 0x33 |
+            0x35 | 0x36 | 0x37 | 0x38| 0x39 | 0x3A | 0x3B | 0x3D | 0x3E | 0x3F
+            => {
+                let cop_num = op & 3;
+                self.regs[Cop0Reg::CAUSE as usize] |= cop_num << 28;
+            },
+            _ => {}
+        }
 
         let mut handler_address = // check BEV
             if (self.regs[Cop0Reg::SR as usize] & (1 << 22)) == 0 {
