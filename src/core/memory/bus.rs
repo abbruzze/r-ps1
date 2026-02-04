@@ -261,12 +261,6 @@ impl Bus {
         &self.bios.memory
     }
 
-    pub fn raise_hw_interrupt(&mut self,i_type: InterruptType) {
-        debug!("Raising interrupt {:?} I_STAT={:04X} I_MASK=${:04X}",i_type,self.interrupt.pending,self.interrupt.mask);
-        self.interrupt.pending |= i_type as u16;
-        self.check_interrupt();
-    }
-
     fn io_port_read(&self,address:u32) -> u32 {
         self.io_ports[((address - IO_BASE_ADDRESS) >> 2) as usize]
     }

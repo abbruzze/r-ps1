@@ -29,12 +29,13 @@ pub struct GPUFrameBuffer {
     crt_width: usize,
     crt_height: usize,
     visible_width:usize,
-    visible_height:usize
+    visible_height:usize,
+    debug_frame: bool,
 }
 
 impl GPUFrameBuffer {
-    pub fn new(frame: Arc<Vec<u8>>, crt_width: usize, crt_height: usize, visible_width:usize,visible_height:usize) -> GPUFrameBuffer {
-        GPUFrameBuffer { frame, crt_width, crt_height,visible_width,visible_height }
+    pub fn new(frame: Arc<Vec<u8>>, crt_width: usize, crt_height: usize, visible_width:usize,visible_height:usize,debug_frame:bool) -> GPUFrameBuffer {
+        GPUFrameBuffer { frame, crt_width, crt_height,visible_width,visible_height,debug_frame }
     }
 }
 

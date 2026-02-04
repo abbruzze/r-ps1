@@ -69,6 +69,7 @@ struct PixelsRenderer {
     last_key_repeat_state: bool,
     warp_mode: bool,
     paused: bool,
+    debug_mode: bool,
 }
 
 impl PixelsRenderer {
@@ -86,6 +87,7 @@ impl PixelsRenderer {
             last_key_repeat_state: false,
             warp_mode: false,
             paused: false,
+            debug_mode: false,
         }
     }
 
@@ -95,13 +97,16 @@ impl PixelsRenderer {
         if duration >= FPS_PERIOD || update_now {
             let fps = self.fps_frames as f64 / duration;
             if let Some(window) = self.window {
-                if self.warp_mode || self.paused {
+                if self.warp_mode || self.paused || self.debug_mode {
                     let mut info = String::new();
                     if self.warp_mode {
-                        info.push_str(" - warp mode");
+                        info.push_str(" (warp mode)");
                     }
                     if self.paused {
-                        info.push_str(" - paused");
+                        info.push_str(" (paused)");
+                    }
+                    if self.debug_mode {
+                        info.push_str(" (debug mode)");
                     }
                     window.set_title(&format!("PS1 Emulator - FPS: {:.2}{info} [{}x{}]", fps,self.width,self.height));
                 }
@@ -120,8 +125,17 @@ impl PixelsRenderer {
                 println!("PixelsRenderer: Frame size changed from {}x{} to {}x{}", self.width, self.height, frame.visible_width, frame.visible_height);
                 self.width = frame.crt_width;
                 self.height = frame.crt_height;
-                //let new_size = winit::dpi::PhysicalSize::new(self.width as u32, self.height as u32);
-                //let _ = self.window.unwrap().request_inner_size(new_size);
+                if self.debug_mode != frame.debug_frame {
+                    self.debug_mode = frame.debug_frame;
+                    let new_size = if frame.debug_frame {
+                        winit::dpi::PhysicalSize::new(self.width as u32, self.height as u32)
+                    }
+                    else {
+                        winit::dpi::PhysicalSize::new(DEFAULT_WIDTH as u32,DEFAULT_HEIGHT as u32)
+                    };
+                    let _ = self.window.unwrap().request_inner_size(new_size);
+                }
+
                 if pixels.resize_buffer(self.width as u32, self.height as u32).is_err() {
                     println!("Pixels buffer resize error");
                 }

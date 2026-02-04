@@ -599,7 +599,7 @@ impl VRamCopyConfig {
         let mut counter_y = self.counter_y;
         let mut finished = false;
         if counter_x >= self.width {
-            counter_x = 0;
+            counter_x -= self.width;
             counter_y += 1;
             finished =  counter_y == self.height;
         }
@@ -838,7 +838,7 @@ impl GPU {
                         self.gp0state = Gp0State::VRamCopy(operation,next)
                     }
                     None => {
-                        if (config.width & 1) == 1 {
+                        if ((config.width * config.height) & 1) == 1 {
                             self.gpu_read_register &= 0xFFFF; // remove upper halfword if width is odd
                         }
                         debug!("VRam->Cpu operation terminated.");
@@ -985,7 +985,7 @@ impl GPU {
             }
         }
 
-        self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height));
+        self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height,self.show_whole_vram));
     }
 }
 

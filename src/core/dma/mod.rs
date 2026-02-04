@@ -70,7 +70,7 @@ impl TransferDirection {
 
 enum DMAResult {
     InProgress,
-    Paused,
+    LeaveBus,
     Finished,
     BlockFinished(bool), // true = last block finished
 }
@@ -148,6 +148,7 @@ struct DMAChannel {
     chopping_window_words: usize,
     chopping_window_cycles: usize,
     linked_list_header: Option<(u32,u32)>,
+    header_in_a_row_count: usize,
 }
 
 impl DMAChannel {
@@ -169,6 +170,7 @@ impl DMAChannel {
             chopping_window_words: 0,
             chopping_window_cycles: 0,
             linked_list_header: None,
+            header_in_a_row_count: 0,
         }
     }
 
@@ -264,12 +266,12 @@ impl DMAChannel {
                     self.update_chopping_windows();
                 }
                 else {
-                    return DMAResult::Paused
+                    return DMAResult::LeaveBus
                 }
             }
         }
         if !self.dma_read_write_word(bus,irq_handler) {
-            return DMAResult::Paused;
+            return DMAResult::LeaveBus;
         }
         self.remaining_words = self.remaining_words.wrapping_sub(1);
         if self.remaining_words == 0 {
@@ -280,7 +282,7 @@ impl DMAChannel {
             if chopping {
                 self.chopping_window_words -= 1;
                 if self.chopping_window_words == 0 {
-                    DMAResult::Paused
+                    DMAResult::LeaveBus
                 }
                 else {
                     DMAResult::InProgress
@@ -329,11 +331,11 @@ impl DMAChannel {
             }
             else {
                 // keep waiting...
-                return DMAResult::Paused;
+                return DMAResult::LeaveBus;
             }
         }
         if !self.dma_read_write_word(bus,irq_handler) {
-            return DMAResult::Paused;
+            return DMAResult::LeaveBus;
         }
         self.remaining_words = self.remaining_words.wrapping_sub(1);
         if self.remaining_words == 0 {
@@ -350,8 +352,9 @@ impl DMAChannel {
         DMAResult::InProgress
     }
     fn do_dma_linked_list(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
-        if self.transfer_direction != TransferDirection::RAMToDevice {
-            panic!("DMA linked list set transfer to Device->RAM")
+        if !matches!(self.transfer_direction,TransferDirection::RAMToDevice) {
+            warn!("DMA linked list set transfer to Device->RAM");
+            return DMAResult::Finished;
         }
         let target = self.madr;
         self.madr = if (self.chcr & 2) == 0 { self.madr.wrapping_add(4) } else { self.madr.wrapping_sub(4) };
@@ -368,33 +371,15 @@ impl DMAChannel {
 
         let (next_node_address,extra_words) = match self.linked_list_header {
             None => {
+                self.header_in_a_row_count += 1;
                 let next_node_address = word & 0xFFFFFF;
                 let words = word >> 24;
-                if words > 0 {
-                    self.linked_list_header = Some((next_node_address, words));
-                }
-                else {
-                    self.linked_list_header = None;
-                    if (next_node_address & 0x800000) != 0 {
-                        self.madr_read = next_node_address;
-                        self.transfer_completed();
-                        debug!("Linked List transfer completed");
-                        return DMAResult::Finished;
-                    }
-                    self.madr = next_node_address;
-                }
-                if words > 0 {
-                    debug!("DMA read linked list header: {:08X} [next_addr={:08X} words={}]",word,next_node_address,words);
-                }
-
-                return DMAResult::Paused;
+                self.linked_list_header = Some((next_node_address, words));
+                return DMAResult::InProgress;
             }
             Some(h) => h,
         };
 
-        // send word to device
-        self.device.borrow_mut().dma_write(word,bus.get_clock_mut(),irq_handler);
-        let extra_words = extra_words - 1;
         if extra_words == 0 {
             // The transfer is stopped once an end marker is reached. On some (earlier?) CPU revisions any address with bit 23 set will be interpreted as an end marker,
             // while on other revisions all bits must be set (i.e. the address must be FFFFFF)
@@ -405,13 +390,26 @@ impl DMAChannel {
             }
             self.madr = next_node_address;
             self.linked_list_header = None;
+            // Hack: here we would have returned LeaveBus but...
+            // break Sony Logo
+            // to pass chain-looping test we have to leave bus to CPU even when no words are transferred
+            // the hack counts how many times a header is encountered and if it goes over a threshold (1024) means we are looping...
+            if self.header_in_a_row_count < 1024 {
+                DMAResult::InProgress
+            }
+            else {
+                DMAResult::LeaveBus
+            }
         }
         else {
-            self.linked_list_header = Some((next_node_address, extra_words));
+            self.header_in_a_row_count = 0;
+            // send word to device
+            self.device.borrow_mut().dma_write(word,bus.get_clock_mut(),irq_handler);
+            self.linked_list_header = Some((next_node_address, extra_words - 1));
+            DMAResult::LeaveBus
         }
-
-        DMAResult::InProgress
     }
+
     #[inline(always)]
     fn is_active(&self) -> bool {
         (self.chcr & (1 << 24)) != 0
@@ -711,7 +709,7 @@ impl DMAController {
     pub fn do_dma_for_cpu_cycles(&mut self,cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let mut dma_in_progress = false;
         for _ in 0..cpu_cycles {
-            dma_in_progress = self.do_dma(bus,irq_handler);
+            dma_in_progress |= self.do_dma(bus,irq_handler);
         }
 
         dma_in_progress
@@ -721,7 +719,7 @@ impl DMAController {
         self.dpcr_changed || self.chcr_changed
     }
 
-    #[inline]
+    #[inline(always)]
     fn do_dma(&mut self,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let channel_in_progress = match self.dma_in_progress_on_channel {
             Some(channel_in_progress) if !self.is_changed() => channel_in_progress,
@@ -765,7 +763,7 @@ impl DMAController {
         }
         let dma_in_progress = match dma_result {
             DMAResult::InProgress => true,
-            DMAResult::Paused => false,
+            DMAResult::LeaveBus => false,
             DMAResult::Finished => {
                 if matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
