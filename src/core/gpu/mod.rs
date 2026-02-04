@@ -950,8 +950,8 @@ impl GPU {
         if !self.display_config.display_disabled {
             let vram_x0 = self.display_config.vram_x_start as usize;
             let vram_y0 = self.display_config.vram_y_start as usize;
-            let is24_bit = matches!(self.display_config.display_depth,DisplayDepth::D24Bits);
-            for y in 0..frame_height {
+            let is24_bit = !self.show_whole_vram && matches!(self.display_config.display_depth,DisplayDepth::D24Bits);
+            for y in 0..frame_height.min(crt_height) {
                 let mut row_offset = (crt_start_y_offset + y) * (crt_width << 2) + (crt_start_x_offset << 2);
                 for x in 0..frame_width {
                     let vram_x = vram_x0 + x;
