@@ -192,6 +192,10 @@ impl DMAChannel {
         }
         match self.sync_mode {
             SyncMode::Manual => {
+                // verify if someone stopped the transfer
+                if !self.is_active() { // the transfer is not active anymore
+                    return DMAResult::Finished;
+                }
                 if self.id == 6 {
                     if matches!(self.transfer_direction,TransferDirection::DeviceToRAM) {
                         self.do_dma_channel6_ot(bus)
@@ -206,8 +210,20 @@ impl DMAChannel {
                     self.do_dma_manual(bus,irq_handler)
                 }
             }
-            SyncMode::Slice => self.do_dma_slice(bus,irq_handler),
-            SyncMode::LinkedList | SyncMode::Reserved => self.do_dma_linked_list(bus,irq_handler),
+            SyncMode::Slice => {
+                // verify if someone stopped the transfer
+                if !self.is_active() { // the transfer is not active anymore
+                    return DMAResult::BlockFinished(true);
+                }
+                self.do_dma_slice(bus,irq_handler)
+            },
+            SyncMode::LinkedList | SyncMode::Reserved => {
+                // verify if someone stopped the transfer
+                if !self.is_active() { // the transfer is not active anymore
+                    return DMAResult::Finished;
+                }
+                self.do_dma_linked_list(bus,irq_handler)
+            },
         }
     }
 
@@ -359,7 +375,7 @@ impl DMAChannel {
                 }
                 else {
                     self.linked_list_header = None;
-                    if (next_node_address & 0x800000) != 0 { // TODO check
+                    if (next_node_address & 0x800000) != 0 {
                         self.madr_read = next_node_address;
                         self.transfer_completed();
                         debug!("Linked List transfer completed");
@@ -371,7 +387,7 @@ impl DMAChannel {
                     debug!("DMA read linked list header: {:08X} [next_addr={:08X} words={}]",word,next_node_address,words);
                 }
 
-                return DMAResult::InProgress;
+                return DMAResult::Paused;
             }
             Some(h) => h,
         };
@@ -382,7 +398,7 @@ impl DMAChannel {
         if extra_words == 0 {
             // The transfer is stopped once an end marker is reached. On some (earlier?) CPU revisions any address with bit 23 set will be interpreted as an end marker,
             // while on other revisions all bits must be set (i.e. the address must be FFFFFF)
-            if (next_node_address & 0x800000) != 0 { // TODO check
+            if (next_node_address & 0x800000) != 0 {
                 self.madr_read = next_node_address;
                 self.transfer_completed();
                 return DMAResult::Finished;
@@ -396,12 +412,17 @@ impl DMAChannel {
 
         DMAResult::InProgress
     }
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        (self.chcr & (1 << 24)) != 0
+    }
     /*
     Bit 28 is automatically cleared upon BEGIN of the transfer, this bit needs to be set only in SyncMode=0 (setting it in other SyncModes would force the first block to be transferred instantly without DREQ, which isn't desired).
     Bit 24 is automatically cleared upon COMPLETION of the transfer, this bit must be always set for all SyncModes when starting a transfer.
      */
+    #[inline(always)]
     fn is_ready(&self) -> bool {
-        let active = (self.chcr & (1 << 24)) != 0;
+        let active = self.is_active();
         let trigger = (self.chcr & (1 << 28)) != 0;
 
         let ready = match self.sync_mode {
@@ -518,6 +539,7 @@ pub struct DMAController {
     channels: [DMAChannel; 7],
     dpcr: u32,
     dpcr_changed: bool,
+    chcr_changed: bool,
     dcir: u32,
     priorities: [(usize, usize); 8], // id,priority
     irq_flags: u8,
@@ -533,6 +555,7 @@ impl DMAController {
             channels: std::array::from_fn(|i| DMAChannel::new(i,&devices[i].clone())),
             dpcr: 0x07654321,
             dpcr_changed: false,
+            chcr_changed: false,
             dcir: 0,
             priorities: std::array::from_fn(|i| (7 - i, 7 - i)),
             irq_flags: 0,
@@ -670,6 +693,7 @@ impl DMAController {
     }
     pub fn write_chcr(&mut self,channel:usize,value:u32) {
         self.channels[channel].write_chcr(value);
+        self.chcr_changed = true;
     }
     pub fn read_reg_f8(&self) -> u32 {
         self.reg_f8
@@ -693,11 +717,17 @@ impl DMAController {
         dma_in_progress
     }
     #[inline]
+    fn is_changed(&self) -> bool {
+        self.dpcr_changed || self.chcr_changed
+    }
+
+    #[inline]
     fn do_dma(&mut self,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let channel_in_progress = match self.dma_in_progress_on_channel {
-            Some(channel_in_progress) if !self.dpcr_changed => channel_in_progress,
+            Some(channel_in_progress) if !self.is_changed() => channel_in_progress,
             _ => {
                 self.dpcr_changed = false;
+                self.chcr_changed = false;
                 if self.dma_enabled {
                     // check if some channel is ready to start DMA according to priorities
                     let mut channel_found: Option<usize> = None;
