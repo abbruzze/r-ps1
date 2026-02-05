@@ -751,7 +751,7 @@ impl Memory for Bus {
     fn read<const SIZE: usize>(&mut self, address: u32,is_fetching:bool) -> ReadMemoryAccess {
         const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32) }
         // get address's info
-        let MemoryMap(segment,section,_base_address,offset) = get_memory_map(address);
+        let MemoryMap(segment,section,address,offset) = get_memory_map(address);
         if DEBUG_MEM {
             debug!("Memory read<{SIZE}>({:?}/{:?}): address={:08X} is_fetching={is_fetching}",segment,section,address);
         }
@@ -865,7 +865,7 @@ impl Memory for Bus {
         };
 
         // get address's info
-        let MemoryMap(segment,section,_base_address,offset) = get_memory_map(address);
+        let MemoryMap(segment,section,address,offset) = get_memory_map(address);
         if DEBUG_MEM {
             debug!("Memory write<{SIZE}>({:?}/{:?}): address={:08X} value={:08X}",segment,section,address,value);
         }
