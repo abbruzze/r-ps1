@@ -239,6 +239,13 @@ impl GPU {
             return;
         }
 
+        // The GPU will not render any lines or polygons where the distance between any two vertices is
+        // larger than 1023 horizontally or 511 vertically
+        if v0.dx(v1) > 1023 || v0.dx(v2) > 1023 || v1.dx(v2) > 1023 ||
+            v0.dy(v1) > 512 || v0.dy(v2) > 512 || v1.dy(v2) > 512 {
+            return;
+        }
+
         let mut draw_span = |y: i16, x0: i32, c0: &ColorFixed, uv0:UV, x1: i32, c1: &ColorFixed, uv1:UV,texture:&Option<PolygonTexture>| {
             let mut xs = x0 >> FP_BITS;//(x0 + (1 << (FP_BITS - 1))) >> FP_BITS;
             let mut xe = x1 >> FP_BITS;//(x1 + (1 << (FP_BITS - 1))) >> FP_BITS;
@@ -424,7 +431,7 @@ impl GPU {
         let dy = b.y - a.y;
         let dx = b.x - a.x;
 
-        (dy < 0) || (dy == 0 && dx < 0)
+        (dy < 0) || (dy == 0 && dx > 0)
     }
 
     #[cfg(feature = "draw_polygon_bounding_box")]
