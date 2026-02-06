@@ -773,7 +773,7 @@ impl DMAController {
                 false
             }
             DMAResult::BlockFinished(last_block) => {
-                if matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete) && self.is_irq_channel_enabled(channel_in_progress) {
+                if ((last_block && matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete)) || matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete)) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
                 }
