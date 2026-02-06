@@ -723,12 +723,16 @@ impl Bus {
         let initial_sp = u32::from_le_bytes(exe[0x30..0x34].try_into().unwrap());
 
         // Copy EXE code/data into PS1 RAM
-        let exe_size = if (exe_size_2kb * 2048) as usize > exe.len() {
+        let mut exe_size = if (exe_size_2kb * 2048) as usize > exe.len() {
             exe_size_2kb
         }
         else {
             exe_size_2kb * 2048
         };
+        if exe_size + 2048 > exe.len() as u32 {
+            exe_size = (exe.len() - 2048) as u32;
+            warn!("Invalid EXE file size: forced to {}",exe_size);
+        }
         self.main_ram[exe_ram_addr as usize..(exe_ram_addr + exe_size) as usize].copy_from_slice(&exe[2048..2048 + exe_size as usize]);
         cpu.get_registers_mut()[28] = initial_r28;
         if initial_sp != 0 {
