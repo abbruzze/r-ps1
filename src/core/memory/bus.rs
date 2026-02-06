@@ -738,6 +738,11 @@ impl Bus {
         cpu.set_pc(initial_pc);
         info!("EXE loaded at {:08X} size is {} bytes PC={:08X}",exe_ram_addr,exe_size,initial_pc);
     }
+
+    pub fn load_pre_exe(&mut self,bin:Vec<u8>,address:u32) {
+        let address = address & 0x1FFFFF;
+        self.main_ram[address as usize..(address as usize + bin.len() )].copy_from_slice(&bin);
+    }
 }
 /*
 Memory Exceptions

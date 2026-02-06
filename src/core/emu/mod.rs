@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
-use std::{fs, thread};
+use std::{fs, io, thread};
 use thread::spawn;
 use build_time::build_time_local;
 use tracing::{error, info};
@@ -44,6 +44,7 @@ pub struct Emulator {
     paused: bool,
     debug_vram_mode: bool,
     last_throttle_timestamp: Instant,
+    dma_in_progress:bool,
 }
 
 impl Emulator {
@@ -78,6 +79,7 @@ impl Emulator {
             paused: false,
             debug_vram_mode: false,
             last_throttle_timestamp: Instant::now(),
+            dma_in_progress: false,
         };
 
         emu
@@ -96,6 +98,10 @@ impl Emulator {
                 Err(format!("{:?}",e))
             }
         }
+    }
+
+    fn load_pre_exe(&self,file_name:&String) -> io::Result<Vec<u8>> {
+        fs::read(file_name)
     }
 
     pub fn emulate(&mut self) {
@@ -118,17 +124,32 @@ impl Emulator {
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = true;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\rse.exe");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\theroots.exe");
+        let exe_pre_files: Vec<(String,u32)> = vec![
+            //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\2"),0x80100000u32),
+            //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
+        ];
 
         self.just_entered_in_step_mode = false;
         self.run_mode = RunMode::FreeMode;
-        let mut dma_in_progress = false;
 
         if LOAD_EXE_PENDING {
             info!("Waiting to reach EXE loading point ...");
 
             while self.cpu.get_pc() != 0x80030000 {
-                self.cpu.execute_next_instruction(&mut self.bus,dma_in_progress) as u64;
+                self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress) as u64;
+            }
+
+            for (exe_pre_file,exe_pre_address) in exe_pre_files.iter() {
+                match self.load_pre_exe(exe_pre_file) {
+                    Ok(bin) => {
+                        info!("Loading pre-exe file {exe_pre_file} at address {:04X}",exe_pre_address);
+                        self.bus.load_pre_exe(bin,*exe_pre_address);
+                    }
+                    Err(e) => {
+                        error!("Error loading pre-exe file {exe_pre_file}: {:?}",e)
+                    }
+                }
             }
 
             match self.load_exe(&exe_path) {
@@ -162,17 +183,18 @@ impl Emulator {
                     self.check_input();
                     thread::sleep(Duration::from_millis(100));
                 }
-                self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,dma_in_progress);
+                self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress);
+
                 self.bus.get_clock_mut().advance_time(self.last_cycles as u64);
+
+                // DMA
+                self.dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
+                // IRQs
+                irq_handler.forward_to_controller(&mut self.bus);
 
                 if send_step {
                     self.send_cpu_info(&loop_tx_cmd);
-                    continue 'main_loop;
                 }
-                // DMA
-                dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
-                // IRQs
-                irq_handler.forward_to_controller(&mut self.bus);
             }
 
             let events_to_process = self.bus.get_clock_mut().next_events();
@@ -224,6 +246,9 @@ impl Emulator {
                         thread::sleep(Duration::from_micros(((EXPECTED_MICROS as f32 - elapsed_micros as f32) * THROTTLE_ADJ_FACTOR) as u64));
                     }
                 }
+            }
+            EventType::GPUCommandCompleted => {
+                self.gpu.borrow_mut().command_completed();
             }
         }
     }
@@ -418,7 +443,7 @@ impl Emulator {
                 let regs = self.cpu.get_registers().clone();
                 let lo = self.cpu.get_lo();
                 let hi = self.cpu.get_hi();
-                Some(DebuggerResponse::CpuRegs(dis,debugger::CpuRegisters {pc,regs,lo,hi},self.last_cycles))
+                Some(DebuggerResponse::CpuRegs(dis,debugger::CpuRegisters {pc,regs,lo,hi,dma_in_progress: self.dma_in_progress},self.last_cycles))
             },
             other => {
                 error!("Unexpected fetching error {:?}",other);

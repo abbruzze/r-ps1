@@ -43,11 +43,12 @@ pub struct CpuRegisters {
     pub regs: [u32;32],
     pub lo: u32,
     pub hi: u32,
+    pub dma_in_progress: bool,
 }
 impl CpuRegisters {
     pub fn dump(&self) -> String {
         let mut dump = String::from("");
-        dump.push_str(&format!("PC={:08X} LO={:08X} HI={:08X}\n",self.pc,self.lo,self.hi));
+        dump.push_str(&format!("PC={:08X} LO={:08X} HI={:08X} DMA={}\n",self.pc,self.lo,self.hi,self.dma_in_progress));
         for r in 0..32 {
             dump.push_str(&format!("{:5}={:08X} ", crate::core::cpu::disassembler::register_alias(r), self.regs[r]));
             if (r & 7) == 7 {
