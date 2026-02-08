@@ -7,11 +7,15 @@ edition = "2024"
 md5 = "0.8.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# eframe = "0.33.2"
 env_logger = "0.11.8"
 pixels = "0.15"
 winit = "0.30"
 build-time = "0.1"
+egui = "0.33.3"
+egui-winit = "0.33"
+egui-wgpu = "0.33.3"
+wgpu = "28.0.0"
+pollster = "0.3"
 
 [features]
 default = ["draw_polygon_bounding_box"]

@@ -12,6 +12,7 @@ pub enum EventType {
     Timer2,
     SIO0,
     DoThrottle,
+    GPUCommandCompleted,
 }
 
 #[derive(Debug, Clone)]

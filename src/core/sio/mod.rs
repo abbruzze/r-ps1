@@ -7,7 +7,7 @@ use crate::core::interrupt::{InterruptType, IrqHandler};
 
 // some attempts here...
 // 8 seems too low for pad.exe
-// 16 seems to high for resolution.exe
+// 16 seems too high for resolution.exe
 const TX_RX_DATA_CYCLES : usize = 10 * CPU_CLOCK / 250_000; // 8 bit sent + 8 bit received at 250 kbps
 
 /*
