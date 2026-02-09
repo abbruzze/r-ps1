@@ -124,7 +124,7 @@ impl Emulator {
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = true;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\stc-017.exe");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\DENTRO.exe");
         let exe_pre_files: Vec<(String,u32)> = vec![
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\2"),0x80100000u32),
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
@@ -248,7 +248,7 @@ impl Emulator {
                 }
             }
             EventType::GPUCommandCompleted => {
-                self.gpu.borrow_mut().command_completed();
+                self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
             }
         }
     }

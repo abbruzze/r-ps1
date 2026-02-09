@@ -356,6 +356,9 @@ impl DMAChannel {
             warn!("DMA linked list set transfer to Device->RAM");
             return DMAResult::Finished;
         }
+        if !self.device.borrow().is_dma_ready() {
+            return DMAResult::LeaveBus;
+        }
         let target = self.madr;
         self.madr = if (self.chcr & 2) == 0 { self.madr.wrapping_add(4) } else { self.madr.wrapping_sub(4) };
         self.madr &= 0xFF_FFFC;

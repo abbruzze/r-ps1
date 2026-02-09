@@ -32,6 +32,8 @@ pub enum CpuException {
     CoprocessorUnusable(usize), // Co-Processor Unusable Exception
     ArithmeticOverflow,         // Arithmetic Overflow Exception
     Reset,
+    // internal only
+    ReadWriteWait,
 }
 
 impl CpuException {
@@ -48,7 +50,8 @@ impl CpuException {
             ReservedInstruction(_) => 10,
             CoprocessorUnusable(_) => 11,
             ArithmeticOverflow => 12,
-            Reset => 32
+            Reset => 32,
+            _ => unreachable!()
         }
     }
 }
@@ -146,6 +149,10 @@ impl ICache {
                         error!("BusError while reading memory for ICache");
                         0
                     }
+                    ReadMemoryAccess::Wait => {
+                        error!("Wait while reading memory for ICache");
+                        0
+                    }
                 };
                 base_address += 4; // next word
             }
@@ -231,6 +238,14 @@ impl WriteQueue {
             return None;
         }
         Some(self.queue[self.head].0)
+    }
+
+    fn peek(&self) -> Option<(u32,u32,usize)> {
+        if self.len == 0 {
+            return None;
+        }
+        let item = self.queue[self.head];
+        Some(item)
     }
 
     fn dequeue(&mut self) -> Option<(u32, u32, usize)> {
@@ -563,11 +578,15 @@ impl Cpu {
                 ReadMemoryAccess::Read(op,penalty_cycles) => {
                     self.op_cycles += penalty_cycles;
                     op
-                },
+                }
                 ReadMemoryAccess::BusError | ReadMemoryAccess::MemoryError => {
                     self.handle_exception(memory,CpuException::BusErrorFetch(self.pc),self.in_branch_delay_slot,self.branch_address,self.last_opcode);
                     self.apply_delayed_load();
                     return self.op_cycles;
+                }
+                ReadMemoryAccess::Wait => {
+                    error!("Wait while reading memory for opcode fetch at address {:08X}",self.pc);
+                    0
                 }
             }
         };
@@ -664,6 +683,10 @@ impl Cpu {
 
         // execute instruction
         if let Err(ex) = self.op_functions[opcode as usize](self,memory,&i,use_write_cache) {
+            if matches!(ex,CpuException::ReadWriteWait) {
+                self.in_branch_delay_slot = was_in_branch_delay_slot;
+                // stay on the same instruction and wait for the memory operation to complete, we will re-attempt to execute the same instruction on the next call to execute_next_instruction
+            }
             self.handle_exception(memory, ex, was_in_branch_delay_slot, self.branch_address,self.last_opcode)
         }
         else {
@@ -699,9 +722,9 @@ impl Cpu {
             while self.write_queue_elapsed > QUEUE_WRITE_MEM_CYCLES {
                 self.write_queue_elapsed -= QUEUE_WRITE_MEM_CYCLES;
                 // perform a write to memory, we consider every write to memory a fixed 4 cycles penalty
-                if let Some((address,value,byte_size)) = self.write_queue.dequeue() {
+                if let Some((address,value,byte_size)) = self.write_queue.peek() {
                     debug!("Cpu flushing queue ({byte_size}) {:08X} = {:08X}",address,value);
-                    let _res = match byte_size {
+                    let res = match byte_size {
                         1 => self.write_data_memory::<8>(memory,address,value,false),
                         2 => self.write_data_memory::<16>(memory,address,value,false),
                         4 => self.write_data_memory::<32>(memory,address,value,false),
@@ -709,6 +732,12 @@ impl Cpu {
                             unreachable!()
                         }
                     };
+                    if let Err(CpuException::ReadWriteWait) = res {
+                        break;
+                    }
+                    else {
+                        self.write_queue.dequeue();
+                    }
                 }
             }
         }
@@ -1125,6 +1154,7 @@ impl Cpu {
             },
             ReadMemoryAccess::BusError => Err(CpuException::BusErrorData(address)),
             ReadMemoryAccess::MemoryError => Err(CpuException::AddressErrorLoad(address)),
+            ReadMemoryAccess::Wait => Err(CpuException::ReadWriteWait)
         }
     }
     #[inline(always)]
@@ -1161,6 +1191,7 @@ impl Cpu {
                     self.cache_write_opcode(address, value);
                     Ok(())
                 }
+                WriteMemoryAccess::Wait => Err(CpuException::ReadWriteWait),
             }
         }
     }

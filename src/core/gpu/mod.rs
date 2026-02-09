@@ -582,7 +582,7 @@ struct Raster {
     raster_line: usize,
 }
 
-type GP0Operation = fn(&mut GPU,u32,&mut IrqHandler);
+type GP0Operation = fn(&mut GPU,u32,&mut IrqHandler) -> usize;
 
 #[derive(Debug,Default,Clone,Copy)]
 struct VRamCopyConfig {
@@ -672,6 +672,7 @@ pub struct GPU {
     vram: Vec<u8>, // little endian format
     gp1_commands: [fn (&mut GPU,u32);0x100],
     cmd_fifo: CommandFifo,
+    gp0_fifo: CommandFifo,
     texture: Texture,
     semi_transparency: SemiTransparency,
     /// Enable dithering from 24 to 15bits RGB
@@ -691,7 +692,6 @@ pub struct GPU {
     gpu_read_register: u32,
     gp0state: Gp0State,
     show_whole_vram: bool,
-    primitive_remaining_cycles: usize,
 }
 
 impl GPU {
@@ -701,6 +701,7 @@ impl GPU {
             vram: vec![0;1024 * 512 * 2],//.into_boxed_slice(),
             gp1_commands: [GPU::gp1_not_implemented;0x100],
             cmd_fifo: CommandFifo::default(),
+            gp0_fifo: CommandFifo::default(),
             texture: Texture::default(),
             semi_transparency: SemiTransparency::Average,
             dithering: false,
@@ -716,7 +717,6 @@ impl GPU {
             gpu_read_register: 0,
             gp0state: Gp0State::WaitingCommand,
             show_whole_vram: false,
-            primitive_remaining_cycles: 0,
         };
 
         gpu.display_config.horizontal_start = 0x260 + 0;
@@ -806,14 +806,13 @@ impl GPU {
 
         let dma = match self.dma_direction {
             DMADirection::Off => 0,
-            DMADirection::Fifo => (!self.cmd_fifo.is_full()) as u32,
+            DMADirection::Fifo => (!self.gp0_fifo.is_full()) as u32,
             DMADirection::CpuToGp0 => self.ready_bits.ready_to_receive_dma_block as u32, // same as 28
             DMADirection::VRamToCpu => self.ready_bits.ready_to_send_vram_to_cpu as u32, // same as 27
         };
         st |= dma << 25;
 
-        let ready_receive_cmd_word = matches!(self.gp0state,Gp0State::WaitingCommand);
-        st |= (ready_receive_cmd_word as u32) << 26;
+        st |= (self.ready_bits.ready_to_receive_cmd_word as u32) << 26;
         st |= (self.ready_bits.ready_to_send_vram_to_cpu as u32) << 27;
         st |= (self.ready_bits.ready_to_receive_dma_block as u32) << 28;
         st |= (self.dma_direction as u32) << 29;
@@ -991,14 +990,20 @@ impl GPU {
         self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height,self.show_whole_vram));
     }
 
-    pub fn command_completed(&mut self) {
-        self.primitive_remaining_cycles = 0;
+    pub fn command_completed(&mut self,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
+        self.ready_bits.ready_to_receive_cmd_word = true;
+        // check if other commands are waiting in the queue
+        while self.ready_bits.ready_to_receive_cmd_word && !self.gp0_fifo.is_empty() {
+            if let Some(cmd) = self.gp0_fifo.pop() {
+                self.gp0_cmd(cmd,clock,interrupt_handler);
+            }
+        }
     }
 }
 
 impl DmaDevice for GPU {
     fn is_dma_ready(&self) -> bool {
-        true
+        self.ready_bits.ready_to_receive_cmd_word || !self.gp0_fifo.is_full()
     }
     fn dma_request(&self) -> bool {
         true

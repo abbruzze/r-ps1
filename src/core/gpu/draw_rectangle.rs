@@ -1,5 +1,6 @@
 use tracing::{debug, info};
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
+use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::IrqHandler;
 
 impl GPU {
@@ -37,7 +38,7 @@ impl GPU {
     Optionally, X/Y-Flip bits can be set in Texpage.Bit12/13, these bits cause the texture coordinates to be decremented (instead of incremented). The X/Y-Flip bits do affect only Rectangles (not Polygons, nor VRAM Transfers).
     Caution: Reportedly, the X/Y-Flip feature isn't supported on old PSX consoles (unknown which ones exactly, maybe such with PU-7 mainboards, and unknown how to detect flipping support; except of course by reading VRAM).
      */
-    pub(super) fn operation_rectangle_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
+    pub(super) fn operation_rectangle_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) -> usize {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 let mut expected_data = 1usize;
@@ -51,6 +52,7 @@ impl GPU {
                 }
 
                 self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(expected_data));
+                0
             }
             Gp0State::WaitingCommandParameters(_, Some(_)) => {
                 let cmd = self.cmd_fifo.pop().unwrap();
@@ -75,6 +77,7 @@ impl GPU {
                 vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
                 let origin = vertex.clone();
                 let color = shading_color.to_u16();
+                let mut pixels = 0;
                 match uv {
                     Some(uv) => { // textured
                         let base_u = uv as u8;
@@ -114,6 +117,7 @@ impl GPU {
                                         } else {
                                             raw_color.modulate_with(&shading_color)
                                         };
+                                        pixels += 1;
                                         self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent,Some(self.semi_transparency));
                                     }
                                 }
@@ -126,6 +130,7 @@ impl GPU {
                     None => { // non-textured
                         for y in 0..height {
                             for x in 0..width {
+                                pixels += 1;
                                 if vertex.is_inside_drawing_area(&self.drawing_area) {
                                     self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent,Some(self.semi_transparency));
                                 }
@@ -138,8 +143,11 @@ impl GPU {
                 }
 
                 self.gp0state = Gp0State::WaitingCommand;
+                GPUTimings::rectangle(pixels,is_textured,semi_transparent)
             }
-            _ => {}
+            _ => {
+                0
+            }
         }
     }
 }

@@ -573,7 +573,9 @@ impl Bus {
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.gpu.borrow().gpu_read_peek());
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         let mut irq_handler = IrqHandler::new();
-                        bus.gpu.borrow_mut().gp0_cmd(value,&mut bus.clock,&mut irq_handler);
+                        if bus.gpu.borrow_mut().gp0_cmd(value,&mut bus.clock,&mut irq_handler) { // GP0 queue is full
+                            return WriteMemoryAccess::Wait;
+                        }
                         irq_handler.forward_to_controller(bus);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }

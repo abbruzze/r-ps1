@@ -1,6 +1,7 @@
 use std::cmp;
 use tracing::{debug, info, warn};
 use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
+use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::IrqHandler;
 
 #[derive(Debug,Clone,Default)]
@@ -85,7 +86,7 @@ impl GPU {
     Within the triangle, the ordering of the vertices doesn't matter on the GPU side (a front-back check, based on clockwise or anti-clockwise ordering, can be implemented at the GTE side).
     Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
      */
-    pub(super) fn operation_polygon_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
+    pub(super) fn operation_polygon_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) -> usize {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 let is_gouraud = (cmd & (1 << 28)) != 0;
@@ -103,6 +104,7 @@ impl GPU {
                 }
 
                 self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(expected_data));
+                0
             }
             Gp0State::WaitingCommandParameters(_, Some(_)) => {
                 let cmd = self.cmd_fifo.pop().unwrap();
@@ -195,19 +197,23 @@ impl GPU {
                     word_index += 1;
                 }
 
-                self.draw_polygon(&polygon,is_gouraud,is_textured,semi_transparent,raw_texture);
+                let pixels = self.draw_polygon(&polygon,is_gouraud,is_textured,semi_transparent,raw_texture);
                 self.gp0state = Gp0State::WaitingCommand;
+                pixels
             }
-            _ => {}
+            _ => {
+                0
+            }
         }
     }
 
-    fn draw_polygon(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
+    fn draw_polygon(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) -> usize {
         debug!("Drawing polygon: {:?} gouraud={is_gouraud} textured={is_textured} semi_transparent={is_semi_transparent} raw_texture={is_raw_texture}",polygon);
-        self.draw_triangle::<0>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
+        let mut pixels = self.draw_triangle::<0>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
         if polygon.vertex.len() == 4 {
-            self.draw_triangle::<1>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
+            pixels += self.draw_triangle::<1>(polygon, is_gouraud, is_textured, is_semi_transparent, is_raw_texture);
         }
+        GPUTimings::triangle(pixels,is_gouraud,is_semi_transparent,is_textured)
     }
 
     #[inline]
@@ -435,7 +441,7 @@ impl GPU {
     }
 
     #[cfg(feature = "draw_polygon_bounding_box")]
-    fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) {
+    fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) -> usize {
         let a = &polygon.vertex[0 + OFFSET];
         let b = &polygon.vertex[1 + OFFSET];
         let c = &polygon.vertex[2 + OFFSET];
@@ -465,11 +471,12 @@ impl GPU {
         // The GPU will not render any lines or polygons where the distance between any two vertices is
         // larger than 1023 horizontally or 511 vertically
         if max_x - min_x > 1023 || max_y - min_y > 512 {
-            return;
+            return 0;
         }
 
         let mut p = Vertex { x:0,y:0 };
 
+        let mut pixels = 0;
         for y in min_y..max_y {
             p.y = y;
             for x in min_x..max_x {
@@ -524,9 +531,12 @@ impl GPU {
 
                 // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
                 if !transparent_pixel {
+                    pixels += 1;
                     self.draw_pixel(&p, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
                 }
             }
         }
+        
+        pixels
     }
 }

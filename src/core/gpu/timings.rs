@@ -4,8 +4,7 @@ pub(super) struct GPUTimings {}
 impl GPUTimings {
     const POLY_LINE_PENALTY : usize = 15;
 
-    pub fn rectangle(width:u16,height:u16,is_textured:bool,is_semi_transparent:bool) -> usize {
-        let area = width * height;
+    pub fn rectangle(pixels:usize,is_textured:bool,is_semi_transparent:bool) -> usize {
         let (base_cycles,mut pixel_cycles) = if is_textured {
             (30,2)
         }
@@ -16,7 +15,7 @@ impl GPUTimings {
             pixel_cycles += 1;
         };
 
-        base_cycles + area as usize * pixel_cycles
+        base_cycles + pixels * pixel_cycles
     }
 
     pub fn rectangle_fill(width:u16,height:u16) -> usize {

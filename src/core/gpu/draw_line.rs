@@ -1,5 +1,6 @@
 use tracing::{debug, info};
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
+use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::IrqHandler;
 
 impl GPU {
@@ -28,11 +29,12 @@ impl GPU {
     Wire-Frame
     Poly-Lines can be used (among others) to create Wire-Frame polygons (by setting the last Vertex equal to Vertex 1).
      */
-    pub(super) fn operation_line_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) {
+    pub(super) fn operation_line_rendering(&mut self,cmd:u32,_irq_handler:&mut IrqHandler) -> usize {
         match self.gp0state {
             Gp0State::WaitingCommandParameters(operation, None) => {
                 let is_gouraud = (cmd & (1 << 28)) != 0;
                 self.gp0state = Gp0State::WaitingCommandParameters(operation, Some(if is_gouraud {3} else {2}));
+                0
             }
             Gp0State::WaitingCommandParameters(operation, Some(_)) => {
                 let cmd = self.cmd_fifo.pop().unwrap();
@@ -54,7 +56,7 @@ impl GPU {
                 let mut end_vertex = orig_end_vertex.clone();
                 end_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
                 debug!("Drawing line v1={:?}/{:?} v2={:?}{:?} shaded={is_gouraud} semi_transparent={semi_transparent}",start_vertex,start_color,end_vertex,end_color);
-                self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
+                let pixels = self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
 
                 if is_polyline {
                     let arg_size : usize = if is_gouraud {2} else {1};
@@ -63,6 +65,7 @@ impl GPU {
                 else {
                     self.gp0state = Gp0State::WaitingCommand;
                 }
+                GPUTimings::line(pixels,is_gouraud,semi_transparent)
             }
             Gp0State::WaitingPolyline(operation,_,start_vertex,start_color,is_gouraud,semi_transparent) => {
                 let end_color = if is_gouraud {
@@ -75,29 +78,32 @@ impl GPU {
                 let mut end_vertex = orig_end_vertex.clone();
                 end_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
                 debug!("Drawing polyline v1={:?}/{:?} v2={:?}{:?} shaded={is_gouraud} semi_transparent={semi_transparent}",start_vertex,start_color,end_vertex,end_color);
-                self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
+                let pixels = self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
                 let arg_size : usize = if is_gouraud {2} else {1};
                 self.gp0state = Gp0State::WaitingPolyline(operation,arg_size,orig_end_vertex,end_color,is_gouraud,semi_transparent);
+                GPUTimings::line(pixels,is_gouraud,semi_transparent)
             }
-            _ => {}
+            _ => {
+                0
+            }
         }
     }
     // Bresenham's line algorithm
-    pub(super) fn draw_line(&mut self, start: &Vertex, end: &Vertex, start_color: &Color, end_color: &Color,shaded:bool, semi_transparent: bool) {
+    pub(super) fn draw_line(&mut self, start: &Vertex, end: &Vertex, start_color: &Color, end_color: &Color,shaded:bool, semi_transparent: bool) -> usize {
         let dx = start.dx(end).abs() as i32;
         let dy = start.dy(end).abs() as i32;
 
         // The GPU will not render any lines or polygons where the distance between any two vertices is
         // larger than 1023 horizontally or 511 vertically
         if dx > 1023 || dy > 511 {
-            return;
+            return 0;
         }
 
         let total_steps = dx.max(dy);
 
         if total_steps == 0 {
             self.draw_pixel(start,start_color,semi_transparent,Some(self.semi_transparency),true);
-            return;
+            return 1;
         }
 
         let sx = if start.x < end.x { 1 } else { -1 };
@@ -115,11 +121,13 @@ impl GPU {
         let mut g_current = (start_color.g as i32) << 16;
         let mut b_current = (start_color.b as i32) << 16;
 
+        let mut pixels = 0usize;
         loop {
             let r = (r_current >> 16) as u8;
             let g = (g_current >> 16) as u8;
             let b = (b_current >> 16) as u8;
 
+            pixels += 1;
             self.draw_pixel(&v, &Color::new(r,g,b,false), semi_transparent,Some(self.semi_transparency),true);
 
             if v.x == end.x && v.y == end.y {
@@ -144,5 +152,6 @@ impl GPU {
                 b_current += b_step;
             }
         }
+        pixels
     }
 }

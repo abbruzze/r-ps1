@@ -74,6 +74,8 @@ impl GPU {
     fn gp1_reset_command_buffer(&mut self,_cmd:u32) {
         debug!("GP1(01) Reset command buffer and CLUT cache");
         self.cmd_fifo.clear();
+        self.gp0_fifo.clear();
+        self.ready_bits.ready_to_receive_cmd_word = true;
         // TODO clear CLUT cache
     }
     /*

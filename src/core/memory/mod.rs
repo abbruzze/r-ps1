@@ -226,6 +226,7 @@ pub enum ReadMemoryAccess {
     Read(u32,usize),
     BusError,
     MemoryError,
+    Wait,
 }
 #[derive(Debug)]
 pub enum WriteMemoryAccess {
@@ -235,6 +236,7 @@ pub enum WriteMemoryAccess {
     MemoryError,
     InvalidateICacheTag,
     InvalidateICacheOpcode,
+    Wait,
 }
 
 // All the memory access use little-endian
