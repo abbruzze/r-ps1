@@ -21,6 +21,7 @@ use std::{fs, io, thread};
 use thread::spawn;
 use build_time::build_time_local;
 use tracing::{error, info};
+use crate::core::cdrom::CDRom;
 
 const THROTTLE_RES : u64 = 100;
 const THROTTLE_ADJ_FACTOR : f32 = 1.8;
@@ -33,6 +34,7 @@ pub struct Emulator {
     cpu: Cpu,
     bus: Bus,
     gpu: Rc<RefCell<GPU>>,
+    cdrom: Rc<RefCell<CDRom>>,
     dma: Rc<RefCell<DMAController>>,
     just_entered_in_step_mode: bool,
     last_cycles: usize,
@@ -55,19 +57,20 @@ impl Emulator {
         let mdec_in = Rc::new(RefCell::new(DummyDMAChannel {}));
         let mdec_out = Rc::new(RefCell::new(DummyDMAChannel {}));
         let gpu = Rc::new(RefCell::new(GPU::new(renderer)));
-        let cdrom = Rc::new(RefCell::new(DummyDMAChannel {}));
+        let cdrom = Rc::new(RefCell::new(CDRom::new()));
         let spu = Rc::new(RefCell::new(DummyDMAChannel {}));
         let pio = Rc::new(RefCell::new(DummyDMAChannel {}));
         let otc = Rc::new(RefCell::new(DummyDMAChannel {}));
         
-        let devices = [mdec_in,mdec_out,gpu.clone() as Rc<RefCell<dyn DmaDevice>>,cdrom,spu,pio,otc];
+        let devices = [mdec_in,mdec_out,gpu.clone() as Rc<RefCell<dyn DmaDevice>>,cdrom.clone(),spu,pio,otc];
         
         let dma = Rc::new(RefCell::new(DMAController::new(&devices)));
-        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu);
+        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu,&cdrom);
 
         let emu = Self {
             cpu,bus,
             gpu,
+            cdrom,
             dma,
             just_entered_in_step_mode: false,
             last_cycles: 0,
@@ -123,8 +126,8 @@ impl Emulator {
 
         let mut irq_handler = IrqHandler::new();
 
-        const LOAD_EXE_PENDING: bool = true;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\DENTRO.exe");
+        const LOAD_EXE_PENDING: bool = false;
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\PSXNICCC.exe");
         let exe_pre_files: Vec<(String,u32)> = vec![
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\2"),0x80100000u32),
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
@@ -249,6 +252,9 @@ impl Emulator {
             }
             EventType::GPUCommandCompleted => {
                 self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
+            }
+            EventType::CDROM(event) => {
+                self.cdrom.borrow_mut().on_event(event,self.bus.get_clock_mut(),irq_handler);
             }
         }
     }

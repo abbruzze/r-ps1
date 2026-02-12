@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::process::exit;
 use std::rc::Rc;
 use tracing::{debug, info, warn};
+use crate::core::cdrom::CDRom;
 use crate::core::clock::{Clock, ClockConfig};
 
 const DEBUG_MEM : bool = false;
@@ -164,6 +165,7 @@ pub struct Bus {
     timer2: Timer<2>,
     dma: Rc<RefCell<DMAController>>,
     gpu: Rc<RefCell<GPU>>,
+    cdrom: Rc<RefCell<CDRom>>,
     sio0: SIO0,
     io_ports: [u32;IO_PORTS_LEN],
     scratchpad: Vec<u8>,
@@ -185,7 +187,8 @@ impl Bus {
     pub fn new(clock_config:ClockConfig,
                bios: ArrayMemory,
                dma: &Rc<RefCell<DMAController>>,
-               gpu: &Rc<RefCell<GPU>>) -> Self {
+               gpu: &Rc<RefCell<GPU>>,
+               cdrom: &Rc<RefCell<CDRom>>) -> Self {
         let main_ram = vec![0; PHYSICAL_MEMORY_SIZE]; // 2MB of main RAM
         let mut bus = Bus {
             clock: Clock::new(clock_config),
@@ -197,6 +200,7 @@ impl Bus {
             timer2: Timer::<2>::new(),
             dma: dma.clone(),
             gpu: gpu.clone(),
+            cdrom: cdrom.clone(),
             sio0: SIO0::new(true,true),
             io_ports: [0;IO_PORTS_LEN],
             scratchpad: vec![0; 0x400],
@@ -475,11 +479,8 @@ impl Bus {
                         ReadMemoryAccess::Read(bus.interrupt.pending as u32,IO_REG_ACCESS_CYCLES)
                     };
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| { Some(bus.interrupt.pending as u32) };
-                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,size| {
-                        debug!("Writing I_STAT {:08X}",value);
-                        // if size != 16 {
-                        //     warn!("Writing to I_STAT port with size {size}");
-                        // }
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        //info!("Writing I_STAT {:08X} [{size}]",value);
                         bus.interrupt.pending &= value as u16;
                         bus.check_interrupt();
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
@@ -490,11 +491,8 @@ impl Bus {
                         ReadMemoryAccess::Read(bus.interrupt.mask as u32,IO_REG_ACCESS_CYCLES)
                     };
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| { Some(bus.interrupt.mask as u32) };
-                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,size| {
-                        debug!("Writing I_MASK {:08X}",value);
-                        // if size != 16 {
-                        //     warn!("Writing to I_MASK port with size {size}");
-                        // }
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        //debug!("Writing I_MASK {:08X}",value);
                         bus.interrupt.mask = value as u16;
                         bus.check_interrupt();
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
@@ -629,6 +627,50 @@ impl Bus {
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.sio0.read_baud() as u32);
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         bus.sio0.write_baud(value as u16);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                // CDROM
+                0x1F801800 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.cdrom.borrow().read_0() as u32, IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.cdrom.borrow().read_0() as u32);
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        bus.cdrom.borrow_mut().write_0(value as u8);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                0x1F801801 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.cdrom.borrow_mut().read_1() as u32, IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.cdrom.borrow().peek_1() as u32);
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        let mut irq_handler = IrqHandler::new();
+                        bus.cdrom.borrow_mut().write_1(value as u8,&mut bus.clock,&mut irq_handler);
+                        irq_handler.forward_to_controller(bus);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                0x1F801802 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,size| {
+                        match size {
+                            8 => ReadMemoryAccess::Read(bus.cdrom.borrow_mut().read_2::<8>(), IO_REG_ACCESS_CYCLES),
+                            16 => ReadMemoryAccess::Read(bus.cdrom.borrow_mut().read_2::<16>(), IO_REG_ACCESS_CYCLES),
+                            32 => ReadMemoryAccess::Read(bus.cdrom.borrow_mut().read_2::<32>(), IO_REG_ACCESS_CYCLES),
+                            _ => unreachable!()
+                        }
+                    };
+                    self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.cdrom.borrow().peek_2() as u32);
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        bus.cdrom.borrow_mut().write_2(value as u8);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                0x1F801803 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.cdrom.borrow().read_3() as u32, IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.cdrom.borrow().read_3() as u32);
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        let mut irq_handler = IrqHandler::new();
+                        bus.cdrom.borrow_mut().write_3(value as u8,&mut irq_handler);
+                        irq_handler.forward_to_controller(bus);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }
                 }

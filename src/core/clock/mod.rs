@@ -1,6 +1,11 @@
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CDROMEventType {
+    RaiseIRQ(u8,Option<(u8,u64)>),
+}
+
 // Tipo di evento
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventType {
@@ -13,6 +18,7 @@ pub enum EventType {
     SIO0,
     DoThrottle,
     GPUCommandCompleted,
+    CDROM(CDROMEventType)
 }
 
 #[derive(Debug, Clone)]

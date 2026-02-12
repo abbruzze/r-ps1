@@ -542,7 +542,7 @@ pub struct DMAController {
     dpcr_changed: bool,
     chcr_changed: bool,
     dcir: u32,
-    priorities: [(usize, usize); 8], // id,priority
+    priorities: [(usize, usize,bool); 8], // id,priority,enabled
     irq_flags: u8,
     reg_f8: u32,
     reg_fc: u32,
@@ -558,7 +558,7 @@ impl DMAController {
             dpcr_changed: false,
             chcr_changed: false,
             dcir: 0,
-            priorities: std::array::from_fn(|i| (7 - i, 7 - i)),
+            priorities: std::array::from_fn(|i| (7 - i, 7 - i,false)),
             irq_flags: 0,
             reg_f8: 0,
             reg_fc: 0,
@@ -589,9 +589,9 @@ impl DMAController {
             else {
                 debug!("DMA CPU priority={}",pr);
             }
-            self.priorities[ch] = (ch,pr);
+            self.priorities[ch] = (ch,pr,enabled);
         }
-        self.priorities.sort_by_key(|&(ch, prio)| std::cmp::Reverse((prio << 3) | ch));
+        self.priorities.sort_by(|a,b| a.2.cmp(&b.2).reverse().then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0))); // sort by enabled, then priority, then id
         self.dpcr_changed = true;
         debug!("DMA channels priorities: {:?}",self.priorities)
     }
@@ -732,8 +732,8 @@ impl DMAController {
                 if self.dma_enabled {
                     // check if some channel is ready to start DMA according to priorities
                     let mut channel_found: Option<usize> = None;
-                    for &(channel, _) in &self.priorities {
-                        if channel == 7 {
+                    for &(channel, _,enabled) in &self.priorities {
+                        if channel == 7 || !enabled {
                             // CPU has priority, no DMA
                             //return false;
                             continue; // TODO
@@ -771,6 +771,7 @@ impl DMAController {
                 if matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
+                    debug!("DMA channel #{} transfer completed, IRQ set",channel_in_progress);
                 }
                 self.dma_in_progress_on_channel = None;
                 false
@@ -779,6 +780,7 @@ impl DMAController {
                 if ((last_block && matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete)) || matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete)) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
+                    debug!("DMA channel #{} block{} completed, IRQ set",channel_in_progress,if last_block {" (last block)"} else {""});
                 }
 
                 if last_block {

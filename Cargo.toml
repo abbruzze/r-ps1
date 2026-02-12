@@ -16,6 +16,7 @@ egui-winit = "0.33"
 egui-wgpu = "0.33.3"
 wgpu = "28.0.0"
 pollster = "0.3"
+cue_sheet = "0.3.0"
 
 [features]
 default = ["draw_polygon_bounding_box"]

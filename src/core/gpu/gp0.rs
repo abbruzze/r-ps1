@@ -35,7 +35,7 @@ const DITHER_TABLE: &[[i8; 4]; 4] = &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4
   however, the Drawing Area/Offset commands GP0(E3h..E5h) don't take up FIFO space either, so not taking up FIFO space doesn't necessarily mean that the command has no function.
 */
 impl GPU {
-    /// returns (<if the operation needs parameters>,<if the operation uses FIFO>,op)
+    /// returns (<if the operation needs parameters>,op)
     fn cmd_to_operation(cmd:u32) -> Option<(bool,GP0Operation)> {
         match (cmd >> 29) & 7 {
             0b001 => Some((true,GPU::operation_polygon_rendering)),
@@ -79,7 +79,7 @@ impl GPU {
         }
         match self.gp0state {
             Gp0State::WaitingCommand => {
-                debug!("GPU GP0 command {:04X}",cmd);
+                debug!("GPU GP0 command {:08X}",cmd);
                 match Self::cmd_to_operation(cmd) {
                     Some((needs_params,operation)) => {
                         if needs_params {

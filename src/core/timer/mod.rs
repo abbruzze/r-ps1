@@ -243,7 +243,7 @@ impl<const N: usize> Timer<N> {
     }
 
     pub fn write_counter(&mut self, value: u32,clock:&mut Clock) {
-        //info!("Writing counter #{N} = {:04X}",value);
+        debug!("Writing counter #{N} = {:04X}",value);
         match self.sync_mode {
             TimerSyncMode::PauseUntilBlankThenFreeRun | TimerSyncMode::StopAtCurrentValue => {
                 self.counter = value as u16;
