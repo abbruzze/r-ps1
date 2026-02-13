@@ -511,6 +511,7 @@ impl GPU {
 
                 let mut semi_transparency = self.semi_transparency;
                 let mut transparent_pixel = false;
+                let mut texture_semi_transparency_allowed = false;
 
                 if let Some(texture) = polygon.texture.as_ref() {
                     semi_transparency = texture.semi_transparency;
@@ -520,7 +521,9 @@ impl GPU {
                     let texture_pixel = self.get_texture_pixel(texture.clut_x, texture.clut_y,u as u32,v as u32,texture.page_base_x,texture.page_base_y,texture.texture_depth);
                     transparent_pixel = texture_pixel == 0x0000;
                     if !transparent_pixel {
+                        texture_semi_transparency_allowed = (texture_pixel & 0x8000) != 0;
                         let raw_color = Color::from_u16(texture_pixel);
+                        color = raw_color;
                         if is_raw_texture {
                             color = raw_color;
                         } else {
@@ -532,6 +535,7 @@ impl GPU {
                 // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
                 if !transparent_pixel {
                     pixels += 1;
+                    let is_semi_transparent = is_semi_transparent && (polygon.texture.is_none() || texture_semi_transparency_allowed);
                     self.draw_pixel(&p, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
                 }
             }

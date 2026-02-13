@@ -111,6 +111,7 @@ impl GPU {
                                     let texture_pixel = self.get_texture_pixel(clut_x, clut_y, u.into(), v.into(),self.texture.page_base_x,self.texture.page_base_y,self.texture.depth);
 
                                     if texture_pixel != 0x0000 {
+                                        let texture_mask_bit = texture_pixel & 0x8000 != 0;
                                         let raw_color = Color::from_u16(texture_pixel);
                                         let color = if is_raw_texture {
                                             raw_color
@@ -118,7 +119,7 @@ impl GPU {
                                             raw_color.modulate_with(&shading_color)
                                         };
                                         pixels += 1;
-                                        self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent,Some(self.semi_transparency));
+                                        self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent && texture_mask_bit,Some(self.semi_transparency));
                                     }
                                 }
                                 vertex.x += 1;
