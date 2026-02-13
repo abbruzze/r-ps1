@@ -3,7 +3,9 @@ use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CDROMEventType {
-    RaiseIRQ(u8,Option<(u8,u64)>),
+    //RaiseIRQ(u8,Option<(u8,u64)>),
+    CdRomRaiseIrq { irq: u8 },
+    CdRomRaiseIrqFor2ndResponse { irq: u8, cmd_to_complete: u8, delay: Option<u64> },
 }
 
 // Tipo di evento
@@ -151,6 +153,13 @@ impl Clock {
 
     pub fn cancel(&mut self, event_type: EventType) {
         self.events.retain(|e| e.event_type != event_type);
+    }
+
+    pub fn cancel_where<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(&EventType) -> bool,
+    {
+        self.events.retain(|e| !predicate(&e.event_type));
     }
 
     pub fn next_event(&mut self) -> Option<Event> {

@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::process::exit;
 use tracing::{debug, info, warn};
 use crate::core::clock::{CDROMEventType, Clock, EventType};
 use crate::core::dma::DmaDevice;
@@ -6,6 +7,7 @@ use crate::core::interrupt::{InterruptType, IrqHandler};
 
 const FIRST_RESPONSE_IRQ_DELAY : u64 = 0x20; // almost immediately
 const GET_ID_SECOND_RESPONSE_IRQ_DELAY : u64 = 0x4A00;
+const INIT_SECOND_RESPONSE_IRQ_DELAY : u64 = 0x13CCE;
 
 /*
 19h,20h --> INT3(yy,mm,dd,ver)
@@ -55,7 +57,7 @@ impl CdromIRQ {
 }
 
 #[derive(Debug,Clone,Copy)]
-enum Mode {
+enum State {
     Idle = 0x00,
     Play = 0x80,
     Seek = 0x40,
@@ -94,10 +96,11 @@ pub struct CDRom {
     hintsts_reg: u8,
     int_1_pending_flag: bool,
     int_2_pending_flag: bool,
-    mode: Mode,
+    state: State,
     motor_on: bool,
     shell_once_opened: bool,
     busy_status: bool,
+    mode:u8,
 }
 
 /*
@@ -122,10 +125,11 @@ impl CDRom {
             hintsts_reg: 0,
             int_1_pending_flag: false,
             int_2_pending_flag: false,
-            mode: Mode::Idle,
+            state: State::Idle,
             motor_on: false,
             shell_once_opened: false,
             busy_status: false,
+            mode: 0,
         }
     }
     /*
@@ -231,11 +235,18 @@ impl CDRom {
 
         match value {
             0x01 => self.command_nop(clock),
+            0x0A => self.command_init(clock,second_response),
             0x19 => self.command_test(clock),
             0x1A => self.command_get_id(clock,second_response),
             _ => {
                 warn!("CDROM send unknown command {:02X}",value);
-                self.prepare_response(CdromIRQ::INT5, Some(&[self.get_stat(false,false,true),INT5Cause::InvalidCommand as u8]),clock,FIRST_RESPONSE_IRQ_DELAY,None);
+                exit(1);
+                self.schedule_irq_no_2nd_response(
+                    CdromIRQ::INT5,
+                    Some(&[self.get_stat(false,false,true),INT5Cause::InvalidCommand as u8]),
+                    clock,
+                    FIRST_RESPONSE_IRQ_DELAY
+                );
             }
         }
     }
@@ -275,13 +286,18 @@ impl CDRom {
         }
     }
 
-    fn schedule_irq_response(&mut self,int:CdromIRQ,clock:&mut Clock,irq_delay:u64,command_to_complete:Option<(u8,u64)>) {
+    fn schedule_irq_no_2nd_response(&mut self,int:CdromIRQ,response_bytes:Option<&[u8]>,clock:&mut Clock,irq_delay:u64) {
         self.busy_status = true;
-        clock.schedule(EventType::CDROM(CDROMEventType::RaiseIRQ(int as u8,command_to_complete)),irq_delay);
+        clock.schedule(EventType::CDROM(CDROMEventType::CdRomRaiseIrq { irq : int as u8 }),irq_delay);
+        if let Some(bytes) = response_bytes {
+            for b in bytes {
+                self.result_fifo.push_back(*b);
+            }
+        }
     }
-
-    fn prepare_response(&mut self,int:CdromIRQ,response_bytes:Option<&[u8]>,clock:&mut Clock,irq_delay:u64,command_to_complete:Option<(u8,u64)>) {
-        self.schedule_irq_response(int,clock,irq_delay,command_to_complete);
+    fn schedule_irq_with_2nd_response(&mut self,int:CdromIRQ,response_bytes:Option<&[u8]>,clock:&mut Clock,irq_delay:u64,cmd_to_complete:u8,second_delay:Option<u64>) {
+        self.busy_status = true;
+        clock.schedule(EventType::CDROM(CDROMEventType::CdRomRaiseIrqFor2ndResponse { irq : int as u8,cmd_to_complete,delay: second_delay }),irq_delay);
         if let Some(bytes) = response_bytes {
             for b in bytes {
                 self.result_fifo.push_back(*b);
@@ -314,7 +330,7 @@ impl CDRom {
      */
     fn get_stat(&self,id_error:bool,seek_error:bool,error:bool) -> u8 {
         let mut stat = 0u8;
-        stat |= self.mode as u8;
+        stat |= self.state as u8;
         if self.shell_once_opened || self.is_shell_opened() {
             stat |= 1 << 4;
         }
@@ -344,43 +360,100 @@ impl CDRom {
         false
     }
 
+    fn activate_motor(&mut self) {
+        self.motor_on = true;
+        info!("CDROM motor activated");
+        // TODO
+    }
+
     // ================ Commands ====================================
+    /*
+    Init - Command 0Ah --> INT3(stat) --> INT2(stat)
+    Multiple effects at once. Sets mode=20h, activates drive motor, Standby, abort all commands.
+     */
+    fn command_init(&mut self,clock:&mut Clock,second_response:bool) {
+        if second_response {
+            // apply command here
+            self.mode = 0x20;
+            self.activate_motor();
+            clock.cancel_where(|event| matches!(event,EventType::CDROM(_)));
+            info!("CDROM init command executed");
+            self.return_2nd_response_stat(clock);
+        }
+        else {
+            if self.parameter_fifo.len() > 0 {
+                self.raise_bad_parameters_error(clock);
+                return;
+            }
+            let stat = self.get_stat(false,false,false);
+            info!("CDROM init stat={:02X}",stat);
+            self.schedule_irq_with_2nd_response(
+                CdromIRQ::INT3,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                0x0A,
+                Some(INIT_SECOND_RESPONSE_IRQ_DELAY),
+            );
+        }
+    }
+    /*
+    Setmode - Command 0Eh,mode --> INT3(stat)
+      7   Speed       (0=Normal speed, 1=Double speed)
+      6   XA-ADPCM    (0=Off, 1=Send XA-ADPCM sectors to SPU Audio Input)
+      5   Sector Size (0=800h=DataOnly, 1=924h=WholeSectorExceptSyncBytes)
+      4   Ignore Bit  (0=Normal, 1=Ignore Sector Size and Setloc position)
+      3   XA-Filter   (0=Off, 1=Process only XA-ADPCM sectors that match Setfilter)
+      2   Report      (0=Off, 1=Enable Report-Interrupts for Audio Play)
+      1   AutoPause   (0=Off, 1=Auto Pause upon End of Track) ;for Audio Play
+      0   CDDA        (0=Off, 1=Allow to Read CD-DA Sectors; ignore missing EDC)
+     */
+    fn command_set_mode(&mut self,clock:&mut Clock) {
+        if self.parameter_fifo.len() != 1 {
+            self.raise_bad_parameters_error(clock);
+            return;
+        }
+        self.mode = self.parameter_fifo.pop_front().unwrap();
+        info!("CDROM set mode to {:02X}",self.mode);
+        self.return_1st_response_stat(clock);
+    }
+
     fn command_test(&mut self,clock:&mut Clock) {
         if self.parameter_fifo.len() != 1 {
-            self.prepare_response(CdromIRQ::INT5, Some(&[self.get_stat(false,false,true),INT5Cause::WrongNumberOfParameters as u8]),clock,FIRST_RESPONSE_IRQ_DELAY,None);
+            self.raise_bad_parameters_error(clock);
             return;
         }
         let sub_function = self.parameter_fifo.pop_front().unwrap();
         match sub_function {
             0x20 => {
                 info!("CDROM test sub function 0x20: sending {:?}",CDROM_VER);
-                self.prepare_response(CdromIRQ::INT3,
-                                      Some(CDROM_VER.as_slice()),
-                                      clock,
-                                      FIRST_RESPONSE_IRQ_DELAY,
-                                      None
+                self.schedule_irq_no_2nd_response(
+                    CdromIRQ::INT3,
+                    Some(CDROM_VER.as_slice()),
+                    clock,
+                    FIRST_RESPONSE_IRQ_DELAY
                 );
             }
             _ => {
                 warn!("Unsupported test command sub function {}",sub_function);
-                self.prepare_response(CdromIRQ::INT5,Some(&[self.get_stat(false,false,true),INT5Cause::InvalidSubFunction as u8]),clock,FIRST_RESPONSE_IRQ_DELAY,None);
+                self.schedule_irq_no_2nd_response(
+                    CdromIRQ::INT5,
+                    Some(&[self.get_stat(false,false,true),INT5Cause::InvalidSubFunction as u8]),
+                    clock,
+                    FIRST_RESPONSE_IRQ_DELAY
+                );
             }
         }
     }
 
     fn command_nop(&mut self,clock:&mut Clock) {
         if self.parameter_fifo.len() > 0 {
-            self.prepare_response(CdromIRQ::INT5, Some(&[self.get_stat(false,false,true),INT5Cause::WrongNumberOfParameters as u8]),clock,FIRST_RESPONSE_IRQ_DELAY,None);
+            self.raise_bad_parameters_error(clock);
             return;
         }
         let stat = self.get_stat(false,false,false);
         info!("CDROM get stat (nop): sending {:02X}",stat);
-        self.prepare_response(CdromIRQ::INT3,
-                              Some(&[stat]),
-                              clock,
-                              FIRST_RESPONSE_IRQ_DELAY,
-                              None
-        );
+        self.return_1st_response_stat(clock);
     }
     /*
         GetID - Command 1Ah --> INT3(stat) --> INT2/5 (stat,flags,type,atip,"SCEx")
@@ -392,32 +465,68 @@ impl CDRom {
             }
             else { // No Disk  INT3(stat)     INT5(08h,40h, 00h,00h, 00h,00h,00h,00h)
                 let stat = self.get_stat(true,false,false);
-                self.prepare_response(CdromIRQ::INT5,
-                                      Some(&[stat,0x40,0x00,0x00,0x00,0x00,0x00,0x00]),
-                                      clock,
-                                      FIRST_RESPONSE_IRQ_DELAY,
-                                      None
+                self.schedule_irq_no_2nd_response(
+                    CdromIRQ::INT5,
+                    Some(&[stat,0x40,0x00,0x00,0x00,0x00,0x00,0x00]),
+                    clock,
+                    FIRST_RESPONSE_IRQ_DELAY
                 );
             }
         }
         else {
             if self.parameter_fifo.len() > 0 {
-                self.prepare_response(CdromIRQ::INT5, Some(&[self.get_stat(false,false,true),INT5Cause::WrongNumberOfParameters as u8]),clock,FIRST_RESPONSE_IRQ_DELAY,None);
+                self.raise_bad_parameters_error(clock);
                 return;
             }
             if self.is_shell_opened() || self.motor_on || self.busy_status {
-                self.prepare_response(CdromIRQ::INT5, Some(&[self.get_stat(false,false,true),INT5Cause::CannotRespondYet as u8]),clock,FIRST_RESPONSE_IRQ_DELAY,None);
+                self.schedule_irq_no_2nd_response(
+                    CdromIRQ::INT5,
+                    Some(&[self.get_stat(false,false,true), INT5Cause::CannotRespondYet as u8]),
+                    clock,
+                    FIRST_RESPONSE_IRQ_DELAY
+                );
                 return;
             }
             let stat = self.get_stat(false,false,false);
             info!("CDROM get id stat={:02X}",stat);
-            self.prepare_response(CdromIRQ::INT3,
-                                  Some(&[stat]),
-                                  clock,
-                                  FIRST_RESPONSE_IRQ_DELAY,
-                                  Some((0x1A,GET_ID_SECOND_RESPONSE_IRQ_DELAY))
+            self.schedule_irq_with_2nd_response(
+                CdromIRQ::INT3,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                0x1A,
+                Some(GET_ID_SECOND_RESPONSE_IRQ_DELAY),
             );
         }
+    }
+
+    fn return_1st_response_stat(&mut self, clock:&mut Clock) {
+        let stat = self.get_stat(false,false,false);
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT3,
+            Some(&[stat]),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY
+        );
+    }
+
+    fn return_2nd_response_stat(&mut self, clock:&mut Clock) {
+        let stat = self.get_stat(false,false,false);
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT2,
+            Some(&[stat]),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY
+        );
+    }
+
+    fn raise_bad_parameters_error(&mut self,clock:&mut Clock) {
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT5,
+            Some(&[self.get_stat(false,false,true),INT5Cause::WrongNumberOfParameters as u8]),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY
+        );
     }
     // ==============================================================
 
@@ -549,24 +658,27 @@ impl CDRom {
 
     pub fn on_event(&mut self,event: CDROMEventType,clock:&mut Clock,irq_handler:&mut IrqHandler) {
         match event {
-            CDROMEventType::RaiseIRQ(int,command_to_complete) => {
-                if let Some(irq) = CdromIRQ::from_u8(int) {
-                    if let Some((command_to_complete,delay)) = command_to_complete {
-                        if delay > 0 {
-                            self.set_irq(irq);
-                            self.check_irq(irq_handler);
-                            info!("CDROM generating {:?}",irq);
-                            clock.schedule(EventType::CDROM(CDROMEventType::RaiseIRQ(int,Some((command_to_complete,0u64)))),delay);
-                        }
-                        else { // complete second response
-                            self.write_cmd(command_to_complete, clock, true);
-                        }
-                    }
-                    else {
-                        self.set_irq(irq);
+            CDROMEventType::CdRomRaiseIrq { irq } => {
+                if let Some(irq) = CdromIRQ::from_u8(irq) {
+                    self.set_irq(irq);
+                    self.check_irq(irq_handler);
+                    info!("CDROM generating {:?}",irq);
+                    self.command_completed();
+                }
+            }
+            CDROMEventType::CdRomRaiseIrqFor2ndResponse { irq, cmd_to_complete, delay } => {
+                if let Some(int) = CdromIRQ::from_u8(irq) {
+                    if let Some(delay) = delay {
+                        self.set_irq(int);
                         self.check_irq(irq_handler);
                         info!("CDROM generating {:?}",irq);
-                        self.command_completed();
+                        clock.schedule(
+                            EventType::CDROM(CDROMEventType::CdRomRaiseIrqFor2ndResponse { irq,cmd_to_complete,delay:None }),
+                            delay
+                        );
+                    }
+                    else {
+                        self.write_cmd(cmd_to_complete, clock, true);
                     }
                 }
             }
