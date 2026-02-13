@@ -523,7 +523,6 @@ impl GPU {
                     if !transparent_pixel {
                         texture_semi_transparency_allowed = (texture_pixel & 0x8000) != 0;
                         let raw_color = Color::from_u16(texture_pixel);
-                        color = raw_color;
                         if is_raw_texture {
                             color = raw_color;
                         } else {
