@@ -111,7 +111,7 @@ impl Color {
     }
 
     fn mod_colors(texture_color: u8, shading_color: u8) -> u8 {
-        cmp::min(255, u16::from(texture_color) * u16::from(shading_color) / 128) as u8
+        cmp::min(255, u16::from(texture_color) * u16::from(shading_color) >> 7) as u8
     }
 
     pub fn modulate_with(&self,c2:&Color) -> Color {

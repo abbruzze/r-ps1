@@ -37,17 +37,18 @@ impl GPUTimings {
     pub fn triangle(pixels:usize,is_gouraud:bool, is_semi_transparent:bool,is_texture:bool) -> usize {
         let mut base_cycles = 30;
         let mut pixel_cycles = 1;
-        if is_texture {
-            base_cycles += 10;
-            pixel_cycles += 1;
-        }
-        if is_gouraud {
-            base_cycles += 5;
-            pixel_cycles += 1;
-        }
-        if is_semi_transparent {
-            pixel_cycles += 1;
-        }
+        // TODO
+        // if is_texture {
+        //     base_cycles += 10;
+        //     pixel_cycles += 1;
+        // }
+        // if is_gouraud {
+        //     base_cycles += 5;
+        //     pixel_cycles += 1;
+        // }
+        // if is_semi_transparent {
+        //     pixel_cycles += 1;
+        // }
 
         base_cycles + pixel_cycles * pixels
     }
