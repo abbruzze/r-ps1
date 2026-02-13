@@ -108,6 +108,10 @@ impl Controller {
         }
     }
 
+    pub fn get_memory_card_mut(&mut self) -> &mut MemoryCard {
+        &mut self.memory_card
+    }
+
     pub fn is_connected(&self) -> bool {
         self.connected
     }
@@ -357,7 +361,6 @@ impl Controller {
                 if cmd == 0x01 && self.connected {
                     self.memory_card_selected = false;
                     self.state = ControllerState::IdLo;
-                    debug!("CONTROLLER got 0x01 => IdLo");
                 }
                 else if cmd == 0x81 && self.memory_card.is_present() {
                     self.memory_card_selected = true;
@@ -368,7 +371,6 @@ impl Controller {
             ControllerState::IdLo => {
                 if cmd == 0x42 {
                     self.state = ControllerState::IdHi;
-                    debug!("CONTROLLER got 0x42 => IdHi");
                     self.mode.id() as u8
                 }
                 else {
@@ -378,19 +380,15 @@ impl Controller {
                 }
             }
             ControllerState::IdHi => {
-                debug!("CONTROLLER got {cmd} => SwLo");
                 self.state = ControllerState::SwLo;
                 (self.mode.id() >> 8) as u8
             }
             ControllerState::SwLo => {
-                debug!("CONTROLLER got {cmd} => SwHi");
                 self.state = ControllerState::SwHi;
-                //debug!("Reading controller: {:04X}",self.digital_switches);
                 self.digital_switches as u8
             }
             ControllerState::SwHi => {
                 self.state = if self.mode.is_digital() {
-                    debug!("CONTROLLER got {cmd} => Init");
                     ControllerState::Init
                 }
                 else {

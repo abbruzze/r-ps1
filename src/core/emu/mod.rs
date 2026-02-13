@@ -124,10 +124,15 @@ impl Emulator {
             debugger.execute();
         });
 
+        match self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\test.mcd")) {
+            Ok(_) => info!("Memory Card loaded"),
+            Err(e) => error!("Memory card error: {:?}",e),
+        }
+
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = false;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\PSXNICCC.exe");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\theroots.exe");
         let exe_pre_files: Vec<(String,u32)> = vec![
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\2"),0x80100000u32),
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
