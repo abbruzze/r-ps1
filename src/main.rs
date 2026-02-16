@@ -9,6 +9,19 @@ mod log;
 pub mod renderer;
 
 fn main() {
+
+    match core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Bandicoot 2.cue")) {
+        Ok(mut disc) => {
+            println!("{:?}",disc);
+            let sector = disc.read_sector(DiscTime::new(24,30,49)).unwrap();
+            println!("{:?} mode={}", sector.get_data_msf(), sector.get_data_mode())
+        }
+        Err(e) => {
+            println!("Error loading disc: {}",e);
+        }
+    }
+    //exit(1);
+
     let config = Config::default();
     
     renderer::pixels::run_loop(|renderer, gui_event_rx| {
