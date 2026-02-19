@@ -1,11 +1,12 @@
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::process::exit;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CDROMEventType {
-    //RaiseIRQ(u8,Option<(u8,u64)>),
-    CdRomRaiseIrq { irq: u8 },
+    CdRomRaiseIrq { irq: u8, completed: bool },
     CdRomRaiseIrqFor2ndResponse { irq: u8, cmd_to_complete: u8, delay: Option<u64> },
+    ReadNextSector(u8),
 }
 
 // Tipo di evento
@@ -187,5 +188,9 @@ impl Clock {
 
     pub fn current_time(&self) -> u64 {
         self.current_time
+    }
+
+    pub fn get_cycles_per_ms(&self,millis:u64) -> u64 {
+        self.clock_config.cpu_hz / 1000 * millis
     }
 }

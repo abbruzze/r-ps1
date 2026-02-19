@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
+use crate::core::cdrom::{util, Region};
 
 const SECTOR_SIZE : u16 = 2352;
 
@@ -19,6 +20,14 @@ impl DiscTime {
 
     pub fn new(minutes:u8,seconds:u8,frames:u8) -> Self {
         Self { minutes, seconds, frames }
+    }
+
+    pub fn new_checked(minutes:u8,seconds:u8,frames:u8) -> Option<Self> {
+        if minutes < 80 && seconds < 60 && frames < 75 {
+            Some(Self::new(minutes,seconds,frames))
+        } else {
+            None
+        }
     }
 
     pub fn m(&self) -> u8 {
@@ -90,13 +99,16 @@ impl fmt::Display for DiscTime {
     }
 }
 
-struct BCD {}
+pub struct BCD {}
 impl BCD {
-    fn decode(value:u8) -> u8 {
+    pub fn decode(value:u8) -> u8 {
         ((value >> 4) * 10) + (value & 0x0F)
     }
-    fn encode(value:u8) -> u8 {
+    pub fn encode(value:u8) -> u8 {
         ((value / 10) << 4) + (value % 10)
+    }
+    pub fn is_valid(value:u8) -> bool {
+        value <= 0x99
     }
 }
 
@@ -182,7 +194,6 @@ pub struct Track {
     start_time:DiscTime,
     end_time:DiscTime,
     pre_gap: Option<DiscTime>,
-    head_position: DiscTime,
 }
 
 impl Track {
@@ -204,7 +215,7 @@ impl Track {
     }
 
     fn new(file_id:u8,number:u8,track_type:TrackType,start_time:DiscTime,end_time:DiscTime,pre_gap:Option<DiscTime>) -> Self {
-        Self { file_id, number, track_type, start_time, end_time, pre_gap, head_position: DiscTime::new(0,0,0) }
+        Self { file_id, number, track_type, start_time, end_time, pre_gap }
     }
 
     fn contains_msf(&self,msf:DiscTime) -> bool {
@@ -226,21 +237,15 @@ impl Track {
 
         Ok(true)
     }
-    fn read_next_sector(&mut self,file:&mut File, buffer: &mut [u8]) -> std::io::Result<()> {
-        self.head_position = self.head_position.add(&DiscTime::FRAME_TIME);
-
-        let offset : u64 = self.head_position.to_lba() as u64 * SECTOR_SIZE as u64;
-        file.seek(SeekFrom::Start(offset))?;
-        file.read_exact(buffer)?;
-
-        Ok(())
-    }
 }
 
 #[derive(Debug)]
 pub struct Disc {
+    cue_file_name:String,
     tracks:Vec<Track>,
     files:Vec<(File,PathBuf)>,
+    region: Option<Region>,
+    head_position: DiscTime,
 }
 
 impl Disc {
@@ -257,8 +262,11 @@ impl Disc {
         let file_path_dir = Path::new(cue_file_name).parent().unwrap();
 
         let mut disc = Disc {
+            cue_file_name: cue_file_name.clone(),
             tracks: Vec::new(),
             files: Vec::new(),
+            region: None,
+            head_position: DiscTime::new(0,0,0),
         };
 
         for track_file in track_list.files.iter() {
@@ -296,6 +304,13 @@ impl Disc {
             }
         }
 
+        // try to extract region from track 1
+        if let Some(track) = disc.tracks.get(0) && matches!(track.track_type,TrackType::Data(_,_) ) {
+            if let Some((_,file_path)) = disc.files.get(0) {
+                disc.region = util::get_cd_region(file_path.as_os_str().to_str().unwrap());
+            }
+        }
+
         Ok(disc)
     }
 
@@ -307,7 +322,25 @@ impl Disc {
         })
     }
 
-    pub fn read_sector(&mut self,msf:DiscTime) -> Option<DataSector> {
+    pub fn get_cue_file_name(&self) -> &String {
+        &self.cue_file_name
+    }
+
+    pub fn get_region(&self) -> Option<Region> {
+        self.region
+    }
+
+    pub fn is_audio_cd(&self) -> bool {
+        if let Some(track_1) = self.tracks.get(0) {
+            matches!(track_1.track_type,TrackType::Audio)
+        } else {
+            false
+        }
+    }
+
+    pub fn read_sector(&mut self) -> Option<DataSector> {
+        let msf = self.head_position;
+
         match self.find_track(msf) {
             Some((track,file,file_path)) => {
                 info!("Reading sector {} from track {} in '{}'",msf,track.track_number(),file_path.display());
@@ -328,5 +361,19 @@ impl Disc {
         }
     }
 
+    pub fn seek_sector(&mut self,msf:DiscTime) {
+        self.head_position = msf;
+    }
 
+    pub fn get_head_position(&self) -> DiscTime {
+        self.head_position
+    }
+
+    pub fn set_next_sector_head_position(&mut self) {
+        self.head_position = self.head_position.add(&DiscTime::FRAME_TIME);
+    }
+
+    pub fn get_tracks(&self) -> &[Track] {
+        &self.tracks
+    }
 }
