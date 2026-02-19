@@ -14,6 +14,7 @@ use std::rc::Rc;
 use tracing::{debug, info, warn};
 use crate::core::cdrom::CDRom;
 use crate::core::clock::{Clock, ClockConfig};
+use crate::core::mdec::MDec;
 
 const DEBUG_MEM : bool = false;
 
@@ -166,6 +167,7 @@ pub struct Bus {
     dma: Rc<RefCell<DMAController>>,
     gpu: Rc<RefCell<GPU>>,
     cdrom: Rc<RefCell<CDRom>>,
+    mdec: Rc<RefCell<MDec>>,
     sio0: SIO0,
     io_ports: [u32;IO_PORTS_LEN],
     scratchpad: Vec<u8>,
@@ -188,7 +190,8 @@ impl Bus {
                bios: ArrayMemory,
                dma: &Rc<RefCell<DMAController>>,
                gpu: &Rc<RefCell<GPU>>,
-               cdrom: &Rc<RefCell<CDRom>>) -> Self {
+               cdrom: &Rc<RefCell<CDRom>>,
+               mdec:&Rc<RefCell<MDec>>) -> Self {
         let main_ram = vec![0; PHYSICAL_MEMORY_SIZE]; // 2MB of main RAM
         let mut bus = Bus {
             clock: Clock::new(clock_config),
@@ -201,6 +204,7 @@ impl Bus {
             dma: dma.clone(),
             gpu: gpu.clone(),
             cdrom: cdrom.clone(),
+            mdec: mdec.clone(),
             sio0: SIO0::new(true,true),
             io_ports: [0;IO_PORTS_LEN],
             scratchpad: vec![0; 0x400],
@@ -498,6 +502,12 @@ impl Bus {
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     };
                 },
+                // SIO
+                0x1F801050..=0x1F80105E => {
+                    self.io_mem_bridge.read[fun_offset] = Bus::sio_read;
+                    self.io_mem_bridge.peek[fun_offset] = Bus::sio_peek;
+                    self.io_mem_bridge.write[fun_offset] = Bus::sio_write;
+                }
                 // SPU
                 0x1F801C00..=0x1F801E80 => {
                     self.io_mem_bridge.read[fun_offset] = Bus::spu_read;
@@ -533,6 +543,15 @@ impl Bus {
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.dma.borrow().read_dicr());
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         bus.dma.borrow_mut().write_dicr(value);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                0x1F8010F6 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.dma.borrow().read_dicr() >> 16,IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.dma.borrow().read_dicr() >> 16);
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        let low_dicr = bus.dma.borrow().read_dicr() & 0xFFFF;
+                        bus.dma.borrow_mut().write_dicr(value << 16 | low_dicr);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }
                 }
@@ -585,6 +604,23 @@ impl Bus {
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.gpu.borrow().gpu_stat_read());
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         bus.gpu.borrow_mut().gp1_cmd(value);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                // MDEC
+                0x1F801820 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.mdec.borrow_mut().read_data(), IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.peek[fun_offset] = |_bus,_address| Some(0);
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        bus.mdec.borrow_mut().write_command(value);
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
+                }
+                0x1F801824 => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.mdec.borrow().read_status(), IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.mdec.borrow().read_status());
+                    self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
+                        bus.mdec.borrow_mut().write_control(value);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }
                 }
@@ -677,6 +713,20 @@ impl Bus {
                 _ => {}
             }
         }
+    }
+
+    // SIO handling
+    fn sio_read(&mut self,address:u32,_size:usize) -> ReadMemoryAccess {
+        info!("SIO read: {:08X}",address);
+        ReadMemoryAccess::Read(0,IO_REG_ACCESS_CYCLES)
+    }
+    fn sio_peek(&self,_address:u32) -> Option<u32> {
+        // TODO
+        Some(0)
+    }
+    fn sio_write(&mut self,address:u32,value:u32,_size:usize) -> WriteMemoryAccess {
+        info!("SIO write: {:08X} = {:08X}",address,value);
+        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
     }
     
     // SPU handling

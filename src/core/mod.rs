@@ -10,7 +10,8 @@ pub mod controllers;
 pub mod config;
 mod sio;
 pub mod clock;
-mod cdrom;
+pub mod cdrom;
+mod mdec;
 
 // CPU Clock   =  33.868800MHz (44100Hz*300h)
 pub const CPU_CLOCK : usize = 33_868_800;

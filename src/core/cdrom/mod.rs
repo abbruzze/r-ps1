@@ -309,7 +309,7 @@ impl CDRom {
         match value {
             0x01 => self.command_nop(clock),
             0x02 => self.command_setloc(clock),
-            0x06 => self.command_readn(clock,second_response),
+            0x06 => self.command_readns(clock,0x06, second_response),
             0x09 => self.command_pause(clock,second_response),
             0x0A => self.command_init(clock,second_response),
             0x0C => self.command_demute(clock),
@@ -318,6 +318,7 @@ impl CDRom {
             0x15 => self.command_seekl(clock,second_response),
             0x19 => self.command_test(clock),
             0x1A => self.command_get_id(clock,second_response),
+            0x1B => self.command_readns(clock,0x01B, second_response),
             _ => {
                 warn!("CDROM send unknown command {:02X}",value);
                 exit(1);
@@ -525,17 +526,20 @@ impl CDRom {
             );
         }
     }
-    // ReadN - Command 06h --> INT3(stat) --> INT1(stat) --> datablock
-    fn command_readn(&mut self,clock:&mut Clock,second_response:bool) {
+    // ReadN/S - Command 06h --> INT3(stat) --> INT1(stat) --> datablock
+    fn command_readns(&mut self, clock:&mut Clock,cmd:u8, second_response:bool) {
         if second_response || matches!(self.state,State::Read) {
             if let Some(disc) = self.disc.as_mut() {
                 if let Some(loc) = self.pending_setloc.take() {
                     disc.seek_sector(loc);
                 }
-                info!("CDROM readn reading loc {:?} previous data in queue: {}",disc.get_head_position(),self.read_buffer.len());
+                if self.read_buffer.len() > 0 {
+                    self.read_buffer.clear();
+                }
+                info!("CDROM readns({:02X}) reading loc {:?} previous data in queue: {}",cmd,disc.get_head_position(),self.read_buffer.len());
                 self.read_data_sector();
                 // send INT1
-                self.return_data_ready_response_stat(clock,0x06);
+                self.return_data_ready_response_stat(clock,cmd);
             }
         }
         else {

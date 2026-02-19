@@ -22,6 +22,7 @@ use thread::spawn;
 use build_time::build_time_local;
 use tracing::{error, info};
 use crate::core::cdrom::CDRom;
+use crate::core::mdec::{MDec, MDecIn, MDecOut};
 
 const THROTTLE_RES : u64 = 100;
 const THROTTLE_ADJ_FACTOR : f32 = 1.8;
@@ -36,6 +37,7 @@ pub struct Emulator {
     gpu: Rc<RefCell<GPU>>,
     cdrom: Rc<RefCell<CDRom>>,
     dma: Rc<RefCell<DMAController>>,
+    mdec: Rc<RefCell<MDec>>,
     just_entered_in_step_mode: bool,
     last_cycles: usize,
     run_mode: RunMode,
@@ -53,25 +55,35 @@ impl Emulator {
     pub fn new(bios:ArrayMemory,logger: Logger,renderer:Box<dyn Renderer>,gui_event_rx: Receiver<GUIEvent>) -> Self {
         info!("Building emulator ...");
         let cpu = Cpu::new();
-        
-        let mdec_in = Rc::new(RefCell::new(DummyDMAChannel {}));
-        let mdec_out = Rc::new(RefCell::new(DummyDMAChannel {}));
+
+        let mdec = Rc::new(RefCell::new(MDec::new()));
+        let mdec_in = Rc::new(RefCell::new(MDecIn::new(&mdec)));
+        let mdec_out = Rc::new(RefCell::new(MDecOut::new(&mdec)));
         let gpu = Rc::new(RefCell::new(GPU::new(renderer)));
         let cdrom = Rc::new(RefCell::new(CDRom::new()));
         let spu = Rc::new(RefCell::new(DummyDMAChannel {}));
         let pio = Rc::new(RefCell::new(DummyDMAChannel {}));
         let otc = Rc::new(RefCell::new(DummyDMAChannel {}));
         
-        let devices = [mdec_in,mdec_out,gpu.clone() as Rc<RefCell<dyn DmaDevice>>,cdrom.clone(),spu,pio,otc];
+        let devices = [
+            mdec_in as Rc<RefCell<dyn DmaDevice>>,
+            mdec_out as Rc<RefCell<dyn DmaDevice>>,
+            gpu.clone() as Rc<RefCell<dyn DmaDevice>>,
+            cdrom.clone(),
+            spu,
+            pio,
+            otc
+        ];
         
         let dma = Rc::new(RefCell::new(DMAController::new(&devices)));
-        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu,&cdrom);
+        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu,&cdrom,&mdec);
 
         let emu = Self {
             cpu,bus,
             gpu,
             cdrom,
             dma,
+            mdec,
             just_entered_in_step_mode: false,
             last_cycles: 0,
             run_mode: RunMode::FreeMode,
@@ -172,7 +184,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Bandicoot 1.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\doom\\Doom.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 
