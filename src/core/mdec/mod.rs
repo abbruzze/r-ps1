@@ -172,25 +172,6 @@ pub struct MDec {
     buffers: Box<Buffers>,
 }
 
-macro_rules! decode_ctx {
-    ($self:expr, color) => {
-        DecodeContext {
-            idct_buffer: &mut $self.buffers.idct_buffer,
-            data_in: &mut $self.data_in,
-            quant_table: &$self.color_quant_table,
-            scale_table: &$self.scale_table,
-        }
-    };
-    ($self:expr, luminance) => {
-        DecodeContext {
-            idct_buffer: &mut $self.buffers.idct_buffer,
-            data_in: &mut $self.data_in,
-            quant_table: &$self.luminance_quant_table,
-            scale_table: &$self.scale_table,
-        }
-    };
-}
-
 impl MDec {
     pub fn new() -> Self {
         Self {
@@ -323,14 +304,14 @@ impl MDec {
     fn decode_colored_macroblocks(&mut self) {
         let mut count = 0;
         loop {
-            if !decode_block(&mut self.buffers.cr_block, decode_ctx!(self, color)) {
+            if !decode_block(&mut self.buffers.cr_block, &mut self.buffers.idct_buffer, &mut self.data_in, &self.color_quant_table, &self.scale_table) {
                 break;
             }
 
-            decode_block(&mut self.buffers.cb_block, decode_ctx!(self, color));
+            decode_block(&mut self.buffers.cb_block, &mut self.buffers.idct_buffer, &mut self.data_in, &self.color_quant_table, &self.scale_table);
 
             for (base_row, base_col) in [(0, 0), (0, 8), (8, 0), (8, 8)] {
-                decode_block(&mut self.buffers.y_block, decode_ctx!(self, luminance));
+                decode_block(&mut self.buffers.y_block, &mut self.buffers.idct_buffer, &mut self.data_in, &self.luminance_quant_table, &self.scale_table);
                 yuv_to_rgb(base_col, base_row, self.decode_config.signed, &mut self.buffers);
             }
 
@@ -379,7 +360,7 @@ impl MDec {
         let mut count = 0;
 
         loop {
-            if !decode_block(&mut self.buffers.y_block, decode_ctx!(self, luminance)) {
+            if !decode_block(&mut self.buffers.y_block, &mut self.buffers.idct_buffer, &mut self.data_in, &self.luminance_quant_table, &self.scale_table) {
                 break;
             }
 
@@ -482,16 +463,12 @@ impl MDec {
     }
 }
 
-struct DecodeContext<'a> {
-    idct_buffer: &'a mut [i32; 64],
-    data_in: &'a mut VecDeque<u16>,
-    quant_table: &'a [u8; 64],
-    scale_table: &'a [i16; 64],
-}
-
 fn decode_block(
     block: &mut [i32; 64],
-    DecodeContext { idct_buffer, data_in, quant_table, scale_table }: DecodeContext<'_>,
+    idct_buffer:&mut [i32; 64],
+    data_in:&mut VecDeque<u16>,
+    quant_table: &[u8; 64],
+    scale_table:&[i16; 64],
 ) -> bool {
     block.fill(0);
 
@@ -601,6 +578,7 @@ fn y_to_mono(signed: bool, buffers: &mut Buffers) {
     }
 }
 
+#[inline(always)]
 fn i10(value: u16) -> i32 {
     (((value as i16) << 6) >> 6).into()
 }

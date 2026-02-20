@@ -1,6 +1,8 @@
 pub mod disc;
 pub mod util;
+mod cue;
 
+use std::array;
 use std::collections::VecDeque;
 use std::process::exit;
 use tracing::{debug, info, warn};
@@ -93,11 +95,12 @@ enum Speed {
 }
 
 impl Speed {
+    const SPEED_CORRECTION_FACTOR : f64 = 1.0;
     #[inline(always)]
     fn get_read_sector_ms(&self) -> u64 {
         match self {
-            Speed::Normal => 1000 / 75,
-            Speed::DoubleSpeed => 1000 / 150,
+            Speed::Normal => (Self::SPEED_CORRECTION_FACTOR * 1000.0 / 75.0) as u64,
+            Speed::DoubleSpeed => (Self::SPEED_CORRECTION_FACTOR * 1000.0 / 150.0) as u64,
         }
     }
 }
@@ -125,6 +128,51 @@ enum INT5Cause {
     DriveDoorBecameOpened = 0x08,
 }
 
+#[derive(Debug, Clone)]
+pub struct DataFifo {
+    values: Box<[u8; disc::SECTOR_SIZE as usize]>,
+    idx: usize,
+    length: usize,
+}
+
+impl DataFifo {
+    pub fn new() -> Self {
+        Self { values: Box::new(array::from_fn(|_| 0)), idx: 0, length: 0 }
+    }
+
+    pub fn copy_from_slice(&mut self, slice: &[u8]) {
+        self.values[..slice.len()].copy_from_slice(slice);
+        self.idx = 0;
+        self.length = slice.len();
+    }
+
+    pub fn len(&self) -> usize {
+        self.length - self.idx
+    }
+
+    pub fn clear(&mut self) {
+        self.idx = 0;
+        self.length = 0;
+    }
+
+    pub fn pop_front(&mut self) -> u8 {
+        // Data FIFO repeatedly returns the last value if all elements are popped
+        if self.length == 0 {
+            return 0;
+        } else if self.idx == self.length {
+            return self.values[self.length - 1];
+        }
+
+        let value = self.values[self.idx];
+        self.idx += 1;
+        value
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.idx == self.length
+    }
+}
+
 const PARAMETER_FIFO_LEN : usize = 16;
 
 pub struct CDRom {
@@ -142,8 +190,10 @@ pub struct CDRom {
     mode:u8,
     disc: Option<Disc>,
     pending_setloc: Option<DiscTime>,
-    read_buffer: VecDeque<u8>,
+    read_buffer: DataFifo,
     hchpctl: u8,
+    pending_cmd: Option<u8>,
+    is_pausing: bool,
 }
 
 /*
@@ -175,8 +225,10 @@ impl CDRom {
             mode: 0,
             disc: None,
             pending_setloc: None,
-            read_buffer: Default::default(),
+            read_buffer: DataFifo::new(),
             hchpctl: 0,
+            pending_cmd: None,
+            is_pausing: false,
         }
     }
 
@@ -262,13 +314,13 @@ impl CDRom {
             warn!("CDROM read_2 called with HCHPCTL.Bit7=0");
         }
         let read = match SIZE {
-            8 => self.read_buffer.pop_front().unwrap_or(0) as u32,
-            16 => self.read_buffer.pop_front().unwrap_or(0) as u32 | (self.read_buffer.pop_front().unwrap_or(0) as u32) << 8,
+            8 => self.read_buffer.pop_front() as u32,
+            16 => self.read_buffer.pop_front() as u32 | (self.read_buffer.pop_front() as u32) << 8,
             32 => u32::from_le_bytes([
-                self.read_buffer.pop_front().unwrap_or(0),
-                self.read_buffer.pop_front().unwrap_or(0),
-                self.read_buffer.pop_front().unwrap_or(0),
-                self.read_buffer.pop_front().unwrap_or(0)
+                self.read_buffer.pop_front(),
+                self.read_buffer.pop_front(),
+                self.read_buffer.pop_front(),
+                self.read_buffer.pop_front()
             ]),
             _ => unreachable!()
         };
@@ -284,7 +336,15 @@ impl CDRom {
 
     pub fn write_1(&mut self,value:u8,clock:&mut Clock,irq_handler:&mut IrqHandler) {
         match self.bank_address {
-            0 => self.write_cmd(value,clock,false),
+            0 => {
+                if self.is_pausing {
+                    info!("Set pending command {:02X}",value);
+                    self.pending_cmd = Some(value);
+                }
+                else {
+                    self.write_cmd(value, clock, false)
+                }
+            },
             1 => self.write_data(value),
             2 => self.write_ci(value),
             3 => self.write_atv2(value),
@@ -315,6 +375,7 @@ impl CDRom {
             0x0C => self.command_demute(clock),
             0x0E => self.command_set_mode(clock),
             0x13 => self.command_get_tn(clock),
+            0x14 => self.command_get_td(clock),
             0x15 => self.command_seekl(clock,second_response),
             0x19 => self.command_test(clock),
             0x1A => self.command_get_id(clock,second_response),
@@ -479,7 +540,11 @@ impl CDRom {
             match disc.read_sector() {
                 Some(sector) => {
                     let data = sector.get_mode2_user_data(&sector_size);
-                    self.read_buffer.extend(data);
+                    // if self.read_buffer.len() > data.len() * 2 {
+                    //     self.read_buffer.drain(data.len() * 2..);
+                    // }
+                    self.read_buffer.copy_from_slice(data);
+                    //self.read_buffer.extend(data);
                 }
                 None => {
                     warn!("CDROM read_data_sector at loc {:?} failed",disc.get_head_position());
@@ -492,6 +557,39 @@ impl CDRom {
     }
 
     // ================ Commands ====================================
+    // GetTD - Command 14h,track --> INT3(stat,mm,ss) ;BCD
+    fn command_get_td(&mut self,clock:&mut Clock) {
+        if self.parameter_fifo.len() != 1 {
+            self.raise_wrong_number_parameters_error(clock);
+            return;
+        }
+        if let Some(disc) = self.disc.as_ref() {
+            let track_n = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+            match disc.get_track_by_number(track_n) {
+                Some(track) => {
+                    let start_time = track.start_time();
+                    info!("CDROM get_td track {}/{} start time {:?}",track_n,track.track_number(),start_time);
+                    self.schedule_irq_no_2nd_response(
+                        CdromIRQ::INT3,
+                        Some(&[self.get_stat(false,false,false),BCD::encode(start_time.m()),BCD::encode(start_time.s())]),
+                        clock,
+                        FIRST_RESPONSE_IRQ_DELAY,
+                        true
+                    );
+                    return;
+                }
+                None => {}
+            }
+        }
+        // error
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT5,
+            Some(&[self.get_stat(false,false,true),INT5Cause::InvalidSubFunction as u8]),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY,
+            true
+        );
+    }
     // Demute - Command 0Ch --> INT3(stat)
     fn command_demute(&mut self,clock: &mut Clock) {
         if self.parameter_fifo.len() != 0 {
@@ -507,7 +605,8 @@ impl CDRom {
         if second_response {
             clock.cancel_where(|event| matches!(event,EventType::CDROM(_)));
             info!("CDROM pause completed");
-            self.command_completed();
+            self.is_pausing = false;
+            self.command_completed(clock);
             self.return_2nd_response_stat(clock);
         }
         else {
@@ -516,6 +615,7 @@ impl CDRom {
                 return;
             }
             let stat = self.get_stat(false,false,false);
+            self.is_pausing = true;
             self.schedule_irq_with_2nd_response(
                 CdromIRQ::INT3,
                 Some(&[stat]),
@@ -533,10 +633,8 @@ impl CDRom {
                 if let Some(loc) = self.pending_setloc.take() {
                     disc.seek_sector(loc);
                 }
-                if self.read_buffer.len() > 0 {
-                    self.read_buffer.clear();
-                }
                 info!("CDROM readns({:02X}) reading loc {:?} previous data in queue: {}",cmd,disc.get_head_position(),self.read_buffer.len());
+
                 self.read_data_sector();
                 // send INT1
                 self.return_data_ready_response_stat(clock,cmd);
@@ -545,8 +643,11 @@ impl CDRom {
         else {
             if self.is_disk_inserted() {
                 self.state = State::Read;
+
+                self.read_buffer.clear();
+
                 let stat = self.get_stat(false,false,false);
-                let read_sector_cycles = clock.get_cycles_per_ms(self.get_speed().get_read_sector_ms() * 1);
+                let read_sector_cycles = clock.get_cycles_per_ms(self.get_speed().get_read_sector_ms() );
                 self.schedule_irq_with_2nd_response(
                     CdromIRQ::INT3,
                     Some(&[stat]),
@@ -638,6 +739,7 @@ impl CDRom {
             let tracks = disc.get_tracks();
             let first_track_n = tracks[0].track_number();
             let last_track_n = tracks[tracks.len()-1].track_number();
+            info!("CDROM get_tn first track {} last track {}",first_track_n,last_track_n);
             let stat = self.get_stat(false,false,false);
             self.schedule_irq_no_2nd_response(
                 CdromIRQ::INT3,
@@ -676,6 +778,7 @@ impl CDRom {
             self.state = State::Idle;
             self.pending_setloc = None;
             self.mode = 0x20;
+            self.read_buffer.clear();
             self.activate_motor();
             clock.cancel_where(|event| matches!(event,EventType::CDROM(_)));
             info!("CDROM init command executed");
@@ -687,7 +790,7 @@ impl CDRom {
                 return;
             }
             let stat = self.get_stat(false,false,false);
-            info!("CDROM init stat={:02X}",stat);
+            //info!("CDROM init stat={:02X}",stat);
             self.schedule_irq_with_2nd_response(
                 CdromIRQ::INT3,
                 Some(&[stat]),
@@ -821,7 +924,7 @@ impl CDRom {
                     let region = disc.get_region().unwrap_or(Region::USA).to_scee_letter() as u8;
                     self.schedule_irq_no_2nd_response(
                         CdromIRQ::INT2,
-                        Some(&[stat,0x00,mode,0x00,b'S',b'C',b'E',b'A']),
+                        Some(&[stat,0x00,mode,0x00,b'S',b'C',b'E',region]),
                         clock,
                         FIRST_RESPONSE_IRQ_DELAY,
                         true
@@ -855,7 +958,7 @@ impl CDRom {
                 return;
             }
             let stat = self.get_stat(false,false,false);
-            info!("CDROM get id stat={:02X}",stat);
+            //info!("CDROM get id stat={:02X}",stat);
             self.schedule_irq_with_2nd_response(
                 CdromIRQ::INT3,
                 Some(&[stat]),
@@ -878,7 +981,7 @@ impl CDRom {
         );
         // schedule next sector event
         //let cycles = clock.get_cycles_per_ms(1000 / 75);
-        let cycles = clock.get_cycles_per_ms(self.get_speed().get_read_sector_ms());
+        let cycles = clock.get_cycles_per_ms(self.get_speed().get_read_sector_ms() );
         clock.schedule(EventType::CDROM(CDROMEventType::ReadNextSector(cmd)),cycles);
     }
 
@@ -954,7 +1057,7 @@ impl CDRom {
     This register is typically set to 1Fh, allowing any of the flags to trigger an IRQ (even though BFEMPT and BFWRDY are never used).
      */
     fn write_hintmsk(&mut self, value: u8) {
-        info!("CDROM set irq mask {:02X}",value);
+        //info!("CDROM set irq mask {:02X}",value);
         self.hintmsk_reg = value;
     }
     fn write_atv0(&mut self, value: u8) {
@@ -1058,10 +1161,14 @@ impl CDRom {
         info!("CDROM write adpctl");
     }
 
-    fn command_completed(&mut self) {
-        info!("Last command completed");
+    fn command_completed(&mut self,clock:&mut Clock) {
+        //info!("Last command completed");
         self.busy_status = false;
         self.state = State::Idle;
+        if let Some(cmd) = self.pending_cmd.take() {
+            info!("Processing pending command: {:02X}",cmd);
+            self.write_cmd(cmd,clock,false);
+        }
     }
 
     pub fn on_event(&mut self,event: CDROMEventType,clock:&mut Clock,irq_handler:&mut IrqHandler) {
@@ -1070,9 +1177,9 @@ impl CDRom {
                 if let Some(irq) = CdromIRQ::from_u8(irq) {
                     self.set_irq(irq);
                     self.check_irq(irq_handler);
-                    info!("CDROM generating {:?}",irq);
+                    //info!("CDROM generating {:?}",irq);
                     if completed {
-                        self.command_completed();
+                        self.command_completed(clock);
                     }
                 }
             }
@@ -1081,7 +1188,7 @@ impl CDRom {
                     if let Some(delay) = delay {
                         self.set_irq(int);
                         self.check_irq(irq_handler);
-                        info!("CDROM generating {:?}",irq);
+                        //info!("CDROM generating {:?}",irq);
                         clock.schedule(
                             EventType::CDROM(CDROMEventType::CdRomRaiseIrqFor2ndResponse { irq,cmd_to_complete,delay:None }),
                             delay
@@ -1093,7 +1200,7 @@ impl CDRom {
                 }
             }
             CDROMEventType::ReadNextSector(cmd) => {
-                info!("CDROM re-executing read sector..[{}]",clock.current_time());
+                //info!("CDROM re-executing read sector..[{}]",clock.current_time());
                 self.write_cmd(cmd, clock, false);
             }
         }
@@ -1102,14 +1209,14 @@ impl CDRom {
 
 impl DmaDevice for CDRom {
     fn is_dma_ready(&self) -> bool {
-        true
+        !self.read_buffer.is_empty()
     }
 
     fn dma_request(&self) -> bool {
-        true
+        self.read_buffer.len() >= 512
     }
 
-    fn dma_write(&mut self, word: u32, clock: &mut Clock, irq_handler: &mut IrqHandler) {
+    fn dma_write(&mut self, _word: u32, _clock: &mut Clock, _irq_handler: &mut IrqHandler) {
         todo!()
     }
 

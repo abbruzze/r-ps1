@@ -4,9 +4,9 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
-use crate::core::cdrom::{util, Region};
+use crate::core::cdrom::{cue, util, Region};
 
-const SECTOR_SIZE : u16 = 2352;
+pub(super) const SECTOR_SIZE : u16 = 2352;
 
 #[derive(Copy,Clone,Debug)]
 pub struct DiscTime {
@@ -16,7 +16,9 @@ pub struct DiscTime {
 }
 
 impl DiscTime {
+    const ZERO_TIME : DiscTime = DiscTime { minutes: 0, seconds: 0, frames: 0 };
     const FRAME_TIME : DiscTime = DiscTime { minutes: 0, seconds: 0, frames: 1 };
+    const _2_SEC_TIME : DiscTime = DiscTime { minutes: 0, seconds: 2, frames: 0 };
 
     pub fn new(minutes:u8,seconds:u8,frames:u8) -> Self {
         Self { minutes, seconds, frames }
@@ -193,7 +195,8 @@ pub struct Track {
     track_type:TrackType,
     start_time:DiscTime,
     end_time:DiscTime,
-    pre_gap: Option<DiscTime>,
+    pre_gap: DiscTime,
+    post_gap: DiscTime,
 }
 
 impl Track {
@@ -213,9 +216,16 @@ impl Track {
     pub fn end_time(&self) -> &DiscTime {
         &self.end_time
     }
+    pub fn duration(&self) -> DiscTime {
+        self.end_time.sub(&self.start_time).add(&self.post_gap).add(&self.pre_gap)
+    }
 
-    fn new(file_id:u8,number:u8,track_type:TrackType,start_time:DiscTime,end_time:DiscTime,pre_gap:Option<DiscTime>) -> Self {
-        Self { file_id, number, track_type, start_time, end_time, pre_gap }
+    fn new(file_id:u8,number:u8,track_type:TrackType,start_time:DiscTime,end_time:DiscTime) -> Self {
+        let (pre_gap,post_gap) = match track_type {
+            TrackType::Audio => (DiscTime::ZERO_TIME,DiscTime::ZERO_TIME),
+            TrackType::Data(_,_) => (DiscTime::_2_SEC_TIME,DiscTime::_2_SEC_TIME)
+        };
+        Self { file_id, number, track_type, start_time: start_time.add(&pre_gap), end_time: end_time.add(&pre_gap),pre_gap, post_gap }
     }
 
     fn contains_msf(&self,msf:DiscTime) -> bool {
@@ -223,15 +233,12 @@ impl Track {
     }
 
     fn read_sector_into(&mut self,file:&mut File, msf:DiscTime, buffer: &mut [u8]) -> std::io::Result<bool> {
-        if msf < self.start_time || msf.add(&DiscTime::new(0,0,1)) > self.end_time {
+        if msf < self.start_time || msf > self.end_time {
+            // TODO: read fake sector
             return Ok(false);
         }
 
-        let msf = match self.pre_gap {
-            Some(pre_gap) => msf.sub(&pre_gap),
-            None => msf
-        };
-        let offset : u64 = msf.to_lba() as u64 * SECTOR_SIZE as u64;
+        let offset : u64 = (msf.to_lba() - self.start_time.to_lba()) as u64 * SECTOR_SIZE as u64;
         file.seek(SeekFrom::Start(offset))?;
         file.read_exact(buffer)?;
 
@@ -250,14 +257,11 @@ pub struct Disc {
 
 impl Disc {
     pub fn new(cue_file_name:&String) -> Result<Self,String> {
-        let cue = match std::fs::read_to_string(cue_file_name) {
+        let cue = match cue::parse_cue(cue_file_name) {
             Ok(cue) => cue,
-            Err(e) => return Err(format!("Failed to read cue sheet '{}': {}",cue_file_name,e))
-        };
-        let track_list = match cue_sheet::tracklist::Tracklist::parse(cue.as_str()) {
-            Ok(tl) => tl,
             Err(e) => return Err(format!("Failed to parse cue sheet '{}': {}",cue_file_name,e))
         };
+        println!("Cue {:?}",cue);
 
         let file_path_dir = Path::new(cue_file_name).parent().unwrap();
 
@@ -269,10 +273,11 @@ impl Disc {
             head_position: DiscTime::new(0,0,0),
         };
 
-        for track_file in track_list.files.iter() {
-            let path = file_path_dir.join(&track_file.name);
+        let mut last_time = DiscTime::new(0,0,0);
+        for track_file in cue.files.iter() {
+            let path = file_path_dir.join(&track_file.path);
             if !path.exists() {
-                return Err(format!("File '{}' referenced in cue sheet '{}' does not exist",track_file.name,cue_file_name));
+                return Err(format!("File '{:?}' referenced in cue sheet '{}' does not exist",track_file.path,cue_file_name));
             }
             match File::open(path.clone()) {
                 Ok(file) => disc.files.push((file,path)),
@@ -280,27 +285,22 @@ impl Disc {
             }
             let file_time = DiscTime::from_file_length(disc.files.last().unwrap().0.metadata().unwrap().len() as u32);
             let file_id = disc.files.len() as u8 - 1;
-            let mut last_time = DiscTime::new(0,0,0);
 
             for cue_track in track_file.tracks.iter() {
                 let track_type = match cue_track.track_type {
-                    cue_sheet::parser::TrackType::Audio => TrackType::Audio,
-                    cue_sheet::parser::TrackType::Mode(_,SECTOR_SIZE) => TrackType::Data(2,SECTOR_SIZE),
+                    cue::TrackType::Audio => TrackType::Audio,
+                    cue::TrackType::Mode1_2352  => TrackType::Data(1,SECTOR_SIZE),
+                    cue::TrackType::Mode2_2352  => TrackType::Data(2,SECTOR_SIZE),
                     _ => return Err(format!("Unsupported track type {:?}",cue_track.track_type))
                 };
-                let mut pre_gap = cue_track.index.iter().find(|i| i.0 == 0).map(|_i| DiscTime::new(0,2,0)); // fixed to 2 seconds
-                if pre_gap.is_none() {
-                    if matches!(track_type, TrackType::Data(_,_) ) {
-                        pre_gap = Some(DiscTime::new(0, 2, 0));
-                    }
-                }
-                let start_time = cue_track.index.iter().find(|i| i.0 == 1).map(|i| DiscTime::new(i.1.minutes() as u8,i.1.seconds() as u8,i.1.frames() as u8)).unwrap_or(DiscTime::new(0,0,0));
-                let duration = cue_track.duration.as_ref().map(|d| DiscTime::new(d.minutes() as u8,d.seconds() as u8,d.frames() as u8)).unwrap_or(file_time);
-                let end_time = start_time.add(&duration);
 
-                let track = Track::new(file_id,cue_track.number as u8,track_type,last_time.add(&start_time),end_time,pre_gap);
+                let track_start_time = cue_track.indices.iter().find(|i| i.number == 1).map(|i| DiscTime::new(i.time.minute,i.time.second,i.time.frame)).unwrap_or(DiscTime::new(0,0,0));
+                let duration = file_time; // suppose one track per file only
+                let track_end_time = track_start_time.add(&duration);
+
+                let track = Track::new(file_id,cue_track.number,track_type,last_time.add(&track_start_time),last_time.add(&track_end_time));
+                last_time = last_time.add(&track.duration());
                 disc.tracks.push(track);
-                last_time = last_time.add(&end_time);
             }
         }
 
@@ -310,6 +310,9 @@ impl Disc {
                 disc.region = util::get_cd_region(file_path.as_os_str().to_str().unwrap());
             }
         }
+
+        info!("Disc '{}' info:",cue_file_name);
+        disc.tracks.iter().for_each(|t| info!("  Track [{:?}] {}: {} - {}",t.track_type(),t.track_number(),t.start_time(),t.end_time()));
 
         Ok(disc)
     }
@@ -375,5 +378,13 @@ impl Disc {
 
     pub fn get_tracks(&self) -> &[Track] {
         &self.tracks
+    }
+
+    // 0 means last track
+    pub fn get_track_by_number(&self,number:u8) -> Option<&Track> {
+        if number == 0 {
+            return self.tracks.last();
+        }
+        self.tracks.iter().find(|t| t.track_number() == number)
     }
 }
