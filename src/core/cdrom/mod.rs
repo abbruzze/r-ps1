@@ -141,6 +141,9 @@ impl DataFifo {
     }
 
     pub fn copy_from_slice(&mut self, slice: &[u8]) {
+        if self.idx < self.length {
+            warn!("Data FIFO overrun, dropping extra bytes: {}",self.length - self.idx);
+        }
         self.values[..slice.len()].copy_from_slice(slice);
         self.idx = 0;
         self.length = slice.len();

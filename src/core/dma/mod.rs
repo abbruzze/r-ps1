@@ -574,7 +574,7 @@ impl DMAController {
     pub fn write_dpcr(&mut self,value:u32) {
         debug!("DMA write dpcr {:08X}",value);
         self.dpcr = value;
-        self.dma_enabled = false; 
+        self.dma_enabled = false;
         let mut value = value;
         for ch in 0..8 {
             let pr = (value & 7) as usize;
@@ -591,7 +591,13 @@ impl DMAController {
             }
             self.priorities[ch] = (ch,pr,enabled);
         }
-        self.priorities.sort_by(|a,b| a.2.cmp(&b.2).reverse().then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0))); // sort by enabled, then priority, then id
+        self.priorities.sort_by_key(|&(ch, pr, enabled)| {
+            (
+                !enabled, // false (enabled) first, true (disabled) then
+                pr,       // lowest priority first
+                std::cmp::Reverse(ch), // highest channel first
+            )
+        });
         self.dpcr_changed = true;
         debug!("DMA channels priorities: {:?}",self.priorities)
     }
@@ -708,7 +714,7 @@ impl DMAController {
     pub fn write_reg_fc(&mut self,value:u32) {
         self.reg_fc = value;
     }
-    
+
     pub fn do_dma_for_cpu_cycles(&mut self,cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let mut dma_in_progress = false;
         for _ in 0..cpu_cycles {
