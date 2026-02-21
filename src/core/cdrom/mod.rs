@@ -95,12 +95,11 @@ enum Speed {
 }
 
 impl Speed {
-    const SPEED_CORRECTION_FACTOR : f64 = 1.0;
     #[inline(always)]
     fn get_read_sector_ms(&self) -> u64 {
         match self {
-            Speed::Normal => (Self::SPEED_CORRECTION_FACTOR * 1000.0 / 75.0) as u64,
-            Speed::DoubleSpeed => (Self::SPEED_CORRECTION_FACTOR * 1000.0 / 150.0) as u64,
+            Speed::Normal => 1000 / 75,
+            Speed::DoubleSpeed => 1000 / 150,
         }
     }
 }
@@ -372,6 +371,7 @@ impl CDRom {
         match value {
             0x01 => self.command_nop(clock),
             0x02 => self.command_setloc(clock),
+            0x03 => self.command_play(clock),
             0x06 => self.command_readns(clock,0x06, second_response),
             0x09 => self.command_pause(clock,second_response),
             0x0A => self.command_init(clock,second_response),
@@ -380,6 +380,7 @@ impl CDRom {
             0x13 => self.command_get_tn(clock),
             0x14 => self.command_get_td(clock),
             0x15 => self.command_seekl(clock,second_response),
+            0x16 => self.command_seekp(clock,second_response),
             0x19 => self.command_test(clock),
             0x1A => self.command_get_id(clock,second_response),
             0x1B => self.command_readns(clock,0x01B, second_response),
@@ -560,6 +561,26 @@ impl CDRom {
     }
 
     // ================ Commands ====================================
+    // Play - Command 03h (,track) --> INT3(stat) --> optional INT1(report bytes)
+    fn command_play(&mut self,clock:&mut Clock) {
+        self.state = State::Play;
+        if let Some(track) = self.parameter_fifo.pop_front() {
+            let track = BCD::decode(track);
+            info!("CDROM play track {}",track);
+        }
+        else {
+            info!("CDROM play with current track");
+        }
+        // TODO
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT3,
+            Some(&[self.get_stat(false,false,false)]),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY,
+            true
+        );
+    }
+
     // GetTD - Command 14h,track --> INT3(stat,mm,ss) ;BCD
     fn command_get_td(&mut self,clock:&mut Clock) {
         if self.parameter_fifo.len() != 1 {
@@ -709,6 +730,43 @@ impl CDRom {
                 clock,
                 FIRST_RESPONSE_IRQ_DELAY,
                 0x15,
+                Some(seek_cycles),
+            );
+        }
+    }
+    // SeekP - Command 16h --> INT3(stat) --> INT2(stat)
+    fn command_seekp(&mut self,clock:&mut Clock,second_response:bool) {
+        if second_response {
+            info!("CDROM seeking-p loc {:?} completed",self.pending_setloc);
+            // TODO
+            let stat = self.get_stat(false,false,false);
+            self.schedule_irq_no_2nd_response(
+                CdromIRQ::INT2,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                true
+            );
+            //self.state = State::Idle;
+        }
+        else {
+            if self.parameter_fifo.len() > 0 {
+                self.raise_wrong_number_parameters_error(clock);
+                return;
+            }
+            self.state = State::Seek;
+            let seek_cycles = match (self.disc.as_ref(),self.pending_setloc.as_ref()) {
+                (Some(disc),Some(loc)) => self.get_approx_seek_cycles(&disc.get_head_position(),&loc,clock),
+                _ => STD_SECOND_RESPONSE_IRQ_DELAY
+            };
+            let stat = self.get_stat(false,false,false);
+            info!("CDROM seeking-p loc {:?} with approx. {} cycles",self.pending_setloc,seek_cycles);
+            self.schedule_irq_with_2nd_response(
+                CdromIRQ::INT3,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                0x16,
                 Some(seek_cycles),
             );
         }
