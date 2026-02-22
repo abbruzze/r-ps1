@@ -25,7 +25,7 @@ use crate::core::cdrom::CDRom;
 use crate::core::mdec::{MDec, MDecIn, MDecOut};
 
 const THROTTLE_RES : u64 = 100;
-const THROTTLE_ADJ_FACTOR : f32 = 1.8;
+const THROTTLE_ADJ_FACTOR : f32 = 1.0;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
@@ -144,7 +144,7 @@ impl Emulator {
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = false;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\HITPSX.exe");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\theroots.exe");
         let exe_pre_files: Vec<(String,u32)> = vec![
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\2"),0x80100000u32),
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
@@ -184,7 +184,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\doom\\Doom.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\residentevil\\Resident Evil - Director's Cut.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 
@@ -209,8 +209,6 @@ impl Emulator {
                 }
                 self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress);
 
-                self.bus.get_clock_mut().advance_time(self.last_cycles as u64);
-
                 // DMA
                 self.dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
                 // IRQs
@@ -219,6 +217,8 @@ impl Emulator {
                 if send_step {
                     self.send_cpu_info(&loop_tx_cmd);
                 }
+
+                self.bus.get_clock_mut().advance_time(self.last_cycles as u64);
             }
 
             let events_to_process = self.bus.get_clock_mut().next_events();

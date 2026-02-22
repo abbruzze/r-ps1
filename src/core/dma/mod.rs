@@ -15,6 +15,10 @@ pub trait DmaDevice {
     fn dma_write(&mut self, word: u32,clock:&mut Clock,irq_handler:&mut IrqHandler);
     // device -> RAM
     fn dma_read(&mut self) -> u32;
+    // tells how many cpu cycles are needed to transfer one word
+    fn dma_cycles_per_word(&self) -> usize {
+        1
+    }
 }
 
 pub struct DummyDMAChannel {}
@@ -149,6 +153,7 @@ struct DMAChannel {
     chopping_window_cycles: usize,
     linked_list_header: Option<(u32,u32)>,
     header_in_a_row_count: usize,
+    cycles_per_word: usize,
 }
 
 impl DMAChannel {
@@ -171,7 +176,13 @@ impl DMAChannel {
             chopping_window_cycles: 0,
             linked_list_header: None,
             header_in_a_row_count: 0,
+            cycles_per_word: device.borrow().dma_cycles_per_word(),
         }
+    }
+
+    #[inline(always)]
+    fn get_cycles_per_word(&self) -> usize {
+        self.cycles_per_word
     }
 
     fn get_bus_error(&mut self) -> bool {
@@ -432,7 +443,7 @@ impl DMAChannel {
             SyncMode::LinkedList | SyncMode::Reserved => active
         };
 
-        self.enabled & ready
+        self.enabled & ready && self.device.borrow().is_dma_ready()
     }
 
     fn read_madr(&self) -> u32 {
@@ -548,6 +559,7 @@ pub struct DMAController {
     reg_fc: u32,
     dma_in_progress_on_channel: Option<usize>,
     dma_enabled: bool,
+    dma_pending_cycles: usize,
 }
 
 impl DMAController {
@@ -564,6 +576,7 @@ impl DMAController {
             reg_fc: 0,
             dma_in_progress_on_channel: None,
             dma_enabled: false,
+            dma_pending_cycles: 0,
         }
     }
 
@@ -591,6 +604,7 @@ impl DMAController {
             }
             self.priorities[ch] = (ch,pr,enabled);
         }
+        //self.priorities.sort_by(|a,b| a.2.cmp(&b.2).reverse().then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0))); // sort by enabled, then priority, then id
         self.priorities.sort_by_key(|&(ch, pr, enabled)| {
             (
                 !enabled, // false (enabled) first, true (disabled) then
@@ -717,8 +731,15 @@ impl DMAController {
 
     pub fn do_dma_for_cpu_cycles(&mut self,cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
         let mut dma_in_progress = false;
-        for _ in 0..cpu_cycles {
-            dma_in_progress |= self.do_dma(bus,irq_handler);
+        self.dma_pending_cycles = self.dma_pending_cycles.saturating_sub(cpu_cycles);
+        if self.dma_pending_cycles == 0 {
+            if self.dma_enabled {
+                for _ in 0..cpu_cycles {
+                    let (dma, cycles_done) = self.do_dma(bus, irq_handler);
+                    dma_in_progress |= dma;
+                    self.dma_pending_cycles += cycles_done;
+                }
+            }
         }
 
         dma_in_progress
@@ -729,37 +750,33 @@ impl DMAController {
     }
 
     #[inline(always)]
-    fn do_dma(&mut self,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
+    fn do_dma(&mut self,bus:&mut Bus,irq_handler:&mut IrqHandler) -> (bool,usize) {
+        let mut dma_cycles = 1;
         let channel_in_progress = match self.dma_in_progress_on_channel {
             Some(channel_in_progress) if !self.is_changed() => channel_in_progress,
             _ => {
                 self.dpcr_changed = false;
                 self.chcr_changed = false;
-                if self.dma_enabled {
-                    // check if some channel is ready to start DMA according to priorities
-                    let mut channel_found: Option<usize> = None;
-                    for &(channel, _,enabled) in &self.priorities {
-                        if channel == 7 || !enabled {
-                            // CPU has priority, no DMA
-                            //return false;
-                            continue; // TODO
-                        }
-                        if self.channels[channel].is_ready() {
-                            channel_found = Some(channel);
-                            debug!("DMA found channel to activate: #{channel}");
-                            break;
-                        }
+                // check if some channel is ready to start DMA according to priorities
+                let mut channel_found: Option<usize> = None;
+                for &(channel, _,enabled) in &self.priorities {
+                    if channel == 7 || !enabled {
+                        // CPU has priority, no DMA
+                        //return false;
+                        continue; // TODO
                     }
-                    if let Some(channel) = channel_found {
-                        self.dma_in_progress_on_channel = Some(channel);
-                        channel
-                    } else {
-                        // can never happen
-                        return false; // no DMA in progress
+                    if self.channels[channel].is_ready() {
+                        dma_cycles = self.channels[channel].get_cycles_per_word();
+                        channel_found = Some(channel);
+                        debug!("DMA found channel to activate: #{channel}");
+                        break;
                     }
                 }
-                else {
-                    return false; // no DMA in progress
+                if let Some(channel) = channel_found {
+                    self.dma_in_progress_on_channel = Some(channel);
+                    channel
+                } else {
+                    return (false,0); // no DMA in progress
                 }
             }
         };
@@ -796,6 +813,8 @@ impl DMAController {
             }
         };
 
-        dma_in_progress
+        (dma_in_progress,dma_cycles)
     }
+
+
 }
