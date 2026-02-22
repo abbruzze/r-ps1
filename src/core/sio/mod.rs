@@ -32,7 +32,7 @@ pub struct SIO0 {
     selected_device: Option<u8>,
     irq: bool,
     ctrl: u16,
-    tx_data: VecDeque<u8>,
+    tx_data: VecDeque<(u8,u8)>, // data, device
     rx_fifo: VecDeque<u8>,
     tx_idle:bool,
     ack_asserted: bool,
@@ -149,13 +149,13 @@ impl SIO0 {
     pub fn write_tx_data(&mut self,data:u8,clock:&mut Clock) {
         debug!("SIO0 Writing data {:02X} sel={:?}",data,self.selected_device);
         match self.selected_device {
-            Some(_) if (self.ctrl & 0x01) != 0 => {
+            Some(device) if (self.ctrl & 0x01) != 0 => {
                 if self.tx_data.len() < 2 {
-                    self.tx_data.push_back(data);
+                    self.tx_data.push_back((data,device));
                     self.reschedule(clock);
                 }
                 else {
-                    debug!("SIO0 TX FIFO overflow, discarding data {:02X}",data);
+                    warn!("SIO0 TX FIFO overflow, discarding data {:02X}",data);
                 }
             }
             _ => {}
@@ -164,41 +164,33 @@ impl SIO0 {
 
     fn reschedule(&mut self,clock:&mut Clock) {
         self.tx_idle = false;
-        /*
+
         let factor = match self.mode & 3 {
             0 | 1 => 1,
             2 => 16,
             3 => 64,
             _ => unreachable!()
         };
-        let cycles = (self.baud * factor) << 3;        
-         */
+        let cycles = (self.baud * factor) << 4;
+
         // use fixed reasonable value: the above value works well with "pad" but not with "resolution"
         self.start_timer_timestamp = clock.current_time();
-        clock.schedule(EventType::SIO0,TX_RX_DATA_CYCLES as u64);
+        clock.schedule(EventType::SIO0,cycles as u64);
     }
 
     pub fn on_tx_transmitted(&mut self,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
         // complete transfer
-        debug!("SIO0 Completing transfer sel={:?}",self.selected_device);
-        match self.selected_device {
-            Some(dev) => {
-                let tx_data = self.tx_data.pop_front().unwrap();
-                let rx_data = self.controllers[dev as usize].read_byte_after_command(tx_data);
-                debug!("SIO0 Transferred sel={:?} {:02X}, received {:02X}",self.selected_device,tx_data,rx_data);
-                self.ack_asserted = self.controllers[dev as usize].ack();
-                if self.ack_asserted && (self.ctrl & (1 << 12)) != 0 { // DSR Interrupt Enable
-                    self.irq = true;
-                    interrupt_handler.set_irq(InterruptType::ControllerMemoryCard);
-                }
-                self.rx_data(rx_data);
-
-            }
-            None => {
-                let tx_data = self.tx_data.pop_front().unwrap();
-                debug!("SIO0 No device selected, discarding transmitted data {:02X}",tx_data);
-            }
+        let (tx_data,dev) = self.tx_data.pop_front().unwrap();
+        debug!("SIO0 Completing transfer sel={:?}",dev);
+        let rx_data = self.controllers[dev as usize].read_byte_after_command(tx_data);
+        debug!("SIO0 Transferred sel={:?} {:02X}, received {:02X}",dev,tx_data,rx_data);
+        self.ack_asserted = self.controllers[dev as usize].ack();
+        if self.ack_asserted && (self.ctrl & (1 << 12)) != 0 { // DSR Interrupt Enable
+            self.irq = true;
+            interrupt_handler.set_irq(InterruptType::ControllerMemoryCard);
         }
+        self.rx_data(rx_data);
+
         // clear RXEN after receiving a byte
         self.ctrl &= !0x04;
         self.tx_idle = self.tx_data.is_empty();
