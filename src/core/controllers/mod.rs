@@ -374,7 +374,7 @@ impl Controller {
                     self.mode.id() as u8
                 }
                 else {
-                    warn!("Unexpected controller command on state {:?}: {:02X}",self.state,cmd);
+                    warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
                     self.state = ControllerState::Init;
                     0xFF
                 }
@@ -394,7 +394,7 @@ impl Controller {
                 else {
                     ControllerState::Analog0
                 };
-
+                //println!("Digital switches: {:04X}",self.digital_switches);
                 (self.digital_switches >> 8) as u8
             }
             ControllerState::Analog0 => {
