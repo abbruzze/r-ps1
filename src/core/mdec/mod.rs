@@ -147,10 +147,10 @@ impl MDecOut {
 
 impl DmaDevice for MDecOut {
     fn is_dma_ready(&self) -> bool {
-        true
+        self.mdec.borrow().data_out_request()
     }
     fn dma_request(&self) -> bool {
-        true
+        self.mdec.borrow().data_out_request()
     }
     fn dma_write(&mut self, _word: u32, _clock: &mut Clock, _irq_handler: &mut IrqHandler) {}
     fn dma_read(&mut self) -> u32 {
