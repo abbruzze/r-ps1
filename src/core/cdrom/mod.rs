@@ -196,6 +196,8 @@ pub struct CDRom {
     hchpctl: u8,
     pending_cmd: Option<u8>,
     is_pausing: bool,
+    last_sector: Vec<u8>,
+    pending_sector: bool,
 }
 
 /*
@@ -231,6 +233,8 @@ impl CDRom {
             hchpctl: 0,
             pending_cmd: None,
             is_pausing: false,
+            last_sector: Vec::with_capacity(disc::SECTOR_SIZE as usize),
+            pending_sector: false,
         }
     }
 
@@ -377,6 +381,8 @@ impl CDRom {
             0x0A => self.command_init(clock,second_response),
             0x0C => self.command_demute(clock),
             0x0E => self.command_set_mode(clock),
+            0x0D => self.command_set_filter(clock),
+            0x10 => self.command_get_locl(clock),
             0x13 => self.command_get_tn(clock),
             0x14 => self.command_get_td(clock),
             0x15 => self.command_seekl(clock,second_response),
@@ -544,11 +550,10 @@ impl CDRom {
             match disc.read_sector() {
                 Some(sector) => {
                     let data = sector.get_mode2_user_data(&sector_size);
-                    // if self.read_buffer.len() > data.len() * 2 {
-                    //     self.read_buffer.drain(data.len() * 2..);
-                    // }
-                    self.read_buffer.copy_from_slice(data);
-                    //self.read_buffer.extend(data);
+                    //self.read_buffer.copy_from_slice(data);
+                    self.last_sector.clear();
+                    self.last_sector.extend(data);
+                    self.pending_sector = true;
                 }
                 None => {
                     warn!("CDROM read_data_sector at loc {:?} failed",disc.get_head_position());
@@ -561,6 +566,40 @@ impl CDRom {
     }
 
     // ================ Commands ====================================
+    // GetlocL - Command 10h --> INT3(amm,ass,asect,mode,file,channel,sm,ci)
+    fn command_get_locl(&mut self,clock:&mut Clock) {
+        // extract 8 bytes (12..19) from current sector
+        let mut locl = Vec::new();
+        for b in self.last_sector[12..20].iter() {
+            locl.push(*b);
+        }
+        info!("CDROM getlocl: {:?}",locl);
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT3,
+            Some(&locl),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY,
+            true
+        );
+    }
+    // Setfilter - Command 0Dh,file,channel --> INT3(stat)
+    fn command_set_filter(&mut self,clock:&mut Clock) {
+        if self.parameter_fifo.len() != 2 {
+            self.raise_wrong_number_parameters_error(clock);
+            return;
+        }
+        let file = self.parameter_fifo.pop_front().unwrap();
+        let channel = self.parameter_fifo.pop_front().unwrap();
+        info!("CDROM set filter file {:02X} channel {:02X}",file,channel);
+        // TODO
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT3,
+            Some(&[self.get_stat(false,false,false)]),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY,
+            true
+        );
+    }
     // Play - Command 03h (,track) --> INT3(stat) --> optional INT1(report bytes)
     fn command_play(&mut self,clock:&mut Clock) {
         self.state = State::Play;
@@ -1192,6 +1231,11 @@ impl CDRom {
      */
     fn write_hchpctl(&mut self, value: u8) {
         self.hchpctl = value;
+        // The Data Request accepts the data for the currently pending interrupt, it should usually be issued between receiving/acknowledging INT1
+        if (value & 0x80) != 0 && self.pending_sector {
+            self.pending_sector = false;
+            self.read_buffer.copy_from_slice(&self.last_sector);
+        }
     }
     /*
     0x1f801803 (write, bank 1): HCLRCTL
@@ -1274,7 +1318,7 @@ impl DmaDevice for CDRom {
     }
 
     fn dma_request(&self) -> bool {
-        self.read_buffer.len() >= 512
+        true
     }
 
     fn dma_write(&mut self, _word: u32, _clock: &mut Clock, _irq_handler: &mut IrqHandler) {
@@ -1284,5 +1328,9 @@ impl DmaDevice for CDRom {
     fn dma_read(&mut self) -> u32 {
         //info!("CDROM dma read");
         self.read_2::<32>()
+    }
+
+    fn dma_cycles_per_word(&self) -> usize {
+        24
     }
 }
