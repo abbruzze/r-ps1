@@ -235,6 +235,7 @@ impl Track {
     fn read_sector_into(&mut self,file:&mut File, msf:DiscTime, buffer: &mut [u8]) -> std::io::Result<bool> {
         if msf < self.start_time || msf > self.end_time {
             // TODO: read fake sector
+            todo!("read fake sector");
             return Ok(false);
         }
 
