@@ -208,7 +208,15 @@ impl MDec {
                     debug!("MDEC no-op command: {value:08X}");
                     CommandState::Idle
                 }
-                // MDEC(1): Decode macroblocks
+                /*
+                MDEC(1) - Decode Macroblock(s)
+                  31-29 Command (1=decode_macroblock)
+                  28-27 Data Output Depth  (0=4bit, 1=8bit, 2=24bit, 3=15bit)      ;STAT.26-25
+                  26    Data Output Signed (0=Unsigned, 1=Signed)                  ;STAT.24
+                  25    Data Output Bit15  (0=Clear, 1=Set) (for 15bit depth only) ;STAT.23
+                  24-16 Not used (should be zero)
+                  15-0  Number of Parameter Words (size of compressed data)
+                 */
                 1 => {
                     self.decode_config = DecodeConfig::from_command(value);
 
@@ -221,7 +229,13 @@ impl MDec {
                         CommandState::Idle
                     }
                 }
-                // MDEC(2): Set quant tables
+                /*
+                MDEC(2) - Set Quant Table(s)
+                  31-29 Command (2=set_iqtab)
+                  28-1  Not used (should be zero)  ;Bit25-28 are copied to STAT.23-26 though
+                  0     Color   (0=Luminance only, 1=Luminance and Color)
+                The command word is followed by 64 unsigned parameter bytes for the Luminance Quant Table (used for Y1..Y4), and if Command.Bit0 was set, by another 64 unsigned parameter bytes for the Color Quant Table (used for Cb and Cr).
+                 */
                 2 => {
                     debug!("MDEC set quant tables command: {value:08X}");
                     CommandState::ReceivingLuminanceTable {
@@ -229,7 +243,13 @@ impl MDec {
                         color_table_after: (value & (1 << 0)) != 0,
                     }
                 }
-                // MDEC(3): Set scale table
+                /*
+                MDEC(3) - Set Scale Table
+                  31-29 Command (3=set_scale)
+                  28-0  Not used (should be zero)  ;Bit25-28 are copied to STAT.23-26 though
+                The command is followed by 64 signed halfwords with 14bit fractional part, the values should be usually/always the same values (based on the standard JPEG constants,
+                although, MDEC(3) allows to use other values than that constants).
+                 */
                 3 => {
                     debug!("MDEC set scale table command: {value:08X}");
                     CommandState::ReceivingScaleTable { halfwords_remaining: 64 }
@@ -420,7 +440,22 @@ impl MDec {
         self.enable_data_out && !self.data_out.is_empty()
     }
 
-    // $1F801824 R: MDEC status register
+    /*
+    1F801824h - MDEC1 - MDEC Status Register (R)
+      31    Data-Out Fifo Empty (0=No, 1=Empty)
+      30    Data-In Fifo Full   (0=No, 1=Full, or Last word received)
+      29    Command Busy  (0=Ready, 1=Busy receiving or processing parameters)
+      28    Data-In Request  (set when DMA0 enabled and ready to receive data)
+      27    Data-Out Request (set when DMA1 enabled and ready to send data)
+      26-25 Data Output Depth  (0=4bit, 1=8bit, 2=24bit, 3=15bit)      ;CMD.28-27
+      24    Data Output Signed (0=Unsigned, 1=Signed)                  ;CMD.26
+      23    Data Output Bit15  (0=Clear, 1=Set) (for 15bit depth only) ;CMD.25
+      22-19 Not used (seems to be always zero)
+      18-16 Current Block (0..3=Y1..Y4, 4=Cr, 5=Cb) (or for mono: always 4=Y)
+      15-0  Number of Parameter Words remaining minus 1  (FFFFh=None)  ;CMD.Bit0-15
+    If there's data in the output fifo, then the Current Block bits are always set to the current output block number (ie. Y1..Y4; or Y for mono) (this information is apparently passed to the DMA1 controller,
+     so that it knows if and how it must re-order the data in RAM). If the output fifo is empty, then the bits indicate the currently processsed incoming block (ie. Cr,Cb,Y1..Y4; or Y for mono).
+     */
     pub fn read_status(&self) -> u32 {
         // TODO bit 30: data in FIFO full
         // TODO bits 18-16: current block (hardcoded to 4)
@@ -442,7 +477,16 @@ impl MDec {
         value
     }
 
-    // $1F801824 W: MDEC control/reset register
+   /*
+   1F801824h - MDEC1 - MDEC Control/Reset Register (W)
+      31    Reset MDEC (0=No change, 1=Abort any command, and set status=80040000h)
+      30    Enable Data-In Request  (0=Disable, 1=Enable DMA0 and Status.bit28)
+      29    Enable Data-Out Request (0=Disable, 1=Enable DMA1 and Status.bit27)
+      28-0  Unknown/Not used - usually zero
+    The data requests are required to be enabled for using DMA (and for reading the request status flags by software).
+    The Data-Out request acts a bit strange: It gets set when a block is available, but, it gets cleared after reading the first some words of that block
+    (nethertheless, one can keep reading the whole block, until the fifo-empty flag gets set).
+    */
     pub fn write_control(&mut self, value: u32) {
         if (value & (1 << 31)) != 0 {
             // TODO actually do reset

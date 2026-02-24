@@ -184,7 +184,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\residentevil\\Resident Evil - Director's Cut.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Team Racing\\CTR - Crash Team Racing (EU).cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 

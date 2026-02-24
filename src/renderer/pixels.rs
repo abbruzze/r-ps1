@@ -146,6 +146,7 @@ impl PixelsRenderer {
             if pixels.render().is_err() {
                 println!("Pixels render error");
             }
+            self.update_fps(false);
             self.window.unwrap().request_redraw();
         }
     }
@@ -214,7 +215,7 @@ impl ApplicationHandler<GPUEvent> for PixelsRenderer {
                 }
             }
             WindowEvent::RedrawRequested => {
-                self.update_fps(false);
+                //self.update_fps(false);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 // if event.repeat {

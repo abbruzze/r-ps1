@@ -376,6 +376,10 @@ impl Disc {
     pub fn set_next_sector_head_position(&mut self) {
         self.head_position = self.head_position.add(&DiscTime::FRAME_TIME);
     }
+    
+    pub fn get_current_track(&self) -> Option<&Track> {
+        self.tracks.iter().find(|t| t.contains_msf(self.head_position))
+    }
 
     pub fn get_tracks(&self) -> &[Track] {
         &self.tracks

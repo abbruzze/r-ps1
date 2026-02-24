@@ -125,10 +125,6 @@ impl SIO0 {
             self.ctrl &= !0x10;
             self.ack_asserted = false;
         }
-        if (value & 0x40) != 0 {
-            self.irq = false;
-            self.selected_device = None;
-        }
         if (value & 0x02) != 0 { // DTR on -> CS
             let selected_device = ((value >> 13) & 1) as u8;
             self.selected_device = Some(selected_device);
@@ -136,6 +132,12 @@ impl SIO0 {
         else {
             self.selected_device = None;
         }
+        if (value & 0x40) != 0 {
+            self.irq = false;
+            self.write_mode(0x0C);
+            self.rx_fifo.clear();
+        }
+
         debug!("SI0 selected device: {:?} ctrl={:02X}",self.selected_device,value);
     }
     pub fn read_ctrl(&self) -> u16 {
@@ -205,13 +207,37 @@ impl SIO0 {
       16-23 Preview            (3rd RX FIFO entry)
       24-31 Preview            (4th RX FIFO entry) (5th..8th cannot be previewed)
     A data byte can be read when SIO_STAT.1=1. Some emulators behave incorrectly when this register is read using a 16/32-bit memory access, so it should only be accessed as an 8-bit register.
+
+    Reading from Empty RX FIFO returns either the most recently received byte or zero (the hardware stores incoming data in ALL unused FIFO entries;
+    eg. if five entries are used, then the data gets stored thrice, after reading 6 bytes, the FIFO empty flag gets set, but nethertheless, the last byte can be read two more times, but doing further reads returns 00h).
+
+    Note: A 16bit read allows to read two FIFO entries at once; nevertheless, it removes only ONE entry from the FIFO.
+    On the contrary, a 32bit read DOES remove FOUR entries (although, there's nothing that'd indicate if the FIFO did actually contain four entries).
      */
-    pub fn read_rx_data(&mut self) -> u8 {
+    pub fn read_rx_data<const SIZE: usize>(&mut self) -> u32 {
+        const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32); }
         debug!("Reading from RX FIFO len={}",self.rx_fifo.len());
-        self.rx_fifo.pop_front().unwrap_or(0xFF)
+        match SIZE {
+            8 => self.rx_fifo.pop_front().unwrap_or(0x00) as u32,
+            16 => {
+                let mut result = (self.rx_fifo.pop_front().unwrap_or(0x00) as u32) << 8;
+                result |= *self.rx_fifo.front().unwrap_or(&0) as u32;
+                result
+            }
+            32 => {
+                let mut result = 0u32;
+                for _ in 0..4 {
+                    result <<= 8;
+                    result |= self.rx_fifo.pop_front().unwrap_or(0) as u32;
+                }
+                result
+            }
+            _ => unreachable!()
+        }
+
     }
     pub fn peek_rx_data(&self) -> u8 {
-        *self.rx_fifo.get(0).unwrap_or(&0xFF)
+        *self.rx_fifo.get(0).unwrap_or(&0x00)
     }
     /*
     1F801044h+N*10h - SIO#_STAT (R)
@@ -262,6 +288,9 @@ impl SIO0 {
     fn rx_data(&mut self,data:u8) {
         if self.rx_fifo.len() < 8 {
             self.rx_fifo.push_back(data);
+        }
+        else {
+            warn!("SIO0 RX FIFO overflow, discarding data {:02X}",data);
         }
     }
 }

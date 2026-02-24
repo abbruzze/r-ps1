@@ -355,6 +355,7 @@ impl Controller {
         if self.memory_card_selected {
             return self.read_mem_card_byte_after_command(cmd);
         }
+        //info!("controller read_byte {:?}",self.state);
 
         match self.state {
             ControllerState::Init => {
@@ -371,13 +372,12 @@ impl Controller {
             ControllerState::IdLo => {
                 if cmd == 0x42 {
                     self.state = ControllerState::IdHi;
-                    self.mode.id() as u8
                 }
                 else {
-                    warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
+                    //warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
                     self.state = ControllerState::Init;
-                    0xFF
                 }
+                self.mode.id() as u8
             }
             ControllerState::IdHi => {
                 self.state = ControllerState::SwLo;

@@ -626,7 +626,14 @@ impl Bus {
                 }
                 // JOY DATA
                 0x1F801040 => {
-                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.sio0.read_rx_data() as u32, IO_REG_ACCESS_CYCLES);
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,size| {
+                        match size {
+                            8 => ReadMemoryAccess::Read(bus.sio0.read_rx_data::<8>(), IO_REG_ACCESS_CYCLES),
+                            16 => ReadMemoryAccess::Read(bus.sio0.read_rx_data::<16>(), IO_REG_ACCESS_CYCLES),
+                            32 => ReadMemoryAccess::Read(bus.sio0.read_rx_data::<32>(), IO_REG_ACCESS_CYCLES),
+                            _ => unreachable!()
+                        }
+                    };
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.sio0.peek_rx_data() as u32);
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         bus.sio0.write_tx_data(value as u8,&mut bus.clock);

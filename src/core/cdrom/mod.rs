@@ -15,6 +15,7 @@ const FIRST_RESPONSE_IRQ_DELAY : u64 = 0x20; // almost immediately
 const GET_ID_SECOND_RESPONSE_IRQ_DELAY : u64 = 0x4A00;
 const INIT_SECOND_RESPONSE_IRQ_DELAY : u64 = 0x13CCE;
 const STD_SECOND_RESPONSE_IRQ_DELAY : u64 = 0x4A73;
+const READ_TOC_SECOND_RESPONSE_IRQ_DELAY: u64 = INIT_SECOND_RESPONSE_IRQ_DELAY;
 
 /*
 19h,20h --> INT3(yy,mm,dd,ver)
@@ -36,7 +37,7 @@ Indicates the date (Year-month-day, in BCD format) and version of the HC05 CDROM
       A1h,03h,06h,C3h  ;PSone/late (PM-41(2))    06 Jun 2001, version vC3 (c)
       (unknown)        ;PS2,   xx xxx xxxx, late PS2 models...?
  */
-const CDROM_VER : [u8;4] = [0x94, 0x11, 0x18, 0xC1]; // 94h,11h,18h,C0h  ;PSX (PU-7)               18 Nov 1994, version vC0 (b)
+const CDROM_VER : [u8;4] = [0x95, 0x07, 0x24, 0xC1]; // 95h,07h,24h,C1h  ;PSX (LATE-PU-8)          24 Jul 1995, version vC1 (b)
 
 #[derive(Debug,Copy,Clone)]
 pub enum Region {
@@ -377,12 +378,14 @@ impl CDRom {
             0x02 => self.command_setloc(clock),
             0x03 => self.command_play(clock),
             0x06 => self.command_readns(clock,0x06, second_response),
+            0x08 => self.command_stop(clock,second_response),
             0x09 => self.command_pause(clock,second_response),
             0x0A => self.command_init(clock,second_response),
             0x0C => self.command_demute(clock),
             0x0E => self.command_set_mode(clock),
             0x0D => self.command_set_filter(clock),
             0x10 => self.command_get_locl(clock),
+            0x11 => self.command_get_locp(clock),
             0x13 => self.command_get_tn(clock),
             0x14 => self.command_get_td(clock),
             0x15 => self.command_seekl(clock,second_response),
@@ -390,6 +393,7 @@ impl CDRom {
             0x19 => self.command_test(clock),
             0x1A => self.command_get_id(clock,second_response),
             0x1B => self.command_readns(clock,0x01B, second_response),
+            0x1E => self.command_read_toc(clock,second_response),
             _ => {
                 warn!("CDROM send unknown command {:02X}",value);
                 exit(1);
@@ -532,9 +536,9 @@ impl CDRom {
         self.disc.is_some()
     }
 
-    fn activate_motor(&mut self) {
+    fn activate_motor(&mut self,enabled:bool) {
         self.motor_on = true;
-        info!("CDROM motor activated");
+        info!("CDROM motor activated: {enabled}");
         // TODO
     }
 
@@ -566,6 +570,94 @@ impl CDRom {
     }
 
     // ================ Commands ====================================
+    // GetlocP - Command 11h - INT3(track,index,mm,ss,sect,amm,ass,asect)
+    fn command_get_locp(&mut self,clock:&mut Clock) {
+        let mut locp = [0u8;8];
+        if let Some(disc) = self.disc.as_ref() {
+            if let Some(track) = disc.get_current_track() {
+                locp[0] = track.track_number();
+                locp[1] = 0x01;
+                let absolute_time = disc.get_head_position();
+                let track_relative_time = disc.get_head_position().sub(track.start_time());
+                locp[2] = absolute_time.m();
+                locp[3] = absolute_time.s();
+                locp[4] = absolute_time.f();
+                locp[5] = track_relative_time.m();
+                locp[6] = track_relative_time.s();
+                locp[7] = track_relative_time.f();
+            }
+            for e in locp.iter_mut() {
+                *e = BCD::encode(*e);
+            }
+        }
+        info!("CDROM getlocp: {:?}",locp);
+        self.schedule_irq_no_2nd_response(
+            CdromIRQ::INT3,
+            Some(&locp),
+            clock,
+            FIRST_RESPONSE_IRQ_DELAY,
+            true
+        );
+    }
+    // Stop - Command 08h --> INT3(stat) --> INT2(stat)
+    fn command_stop(&mut self,clock:&mut Clock,second_response:bool) {
+        if second_response {
+            info!("CDROM stop completed");
+            self.activate_motor(false);
+            let stat = self.get_stat(false,false,false);
+            self.schedule_irq_no_2nd_response(
+                CdromIRQ::INT2,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                true
+            );
+        }
+        else {
+            if self.parameter_fifo.len() != 0 {
+                self.raise_wrong_number_parameters_error(clock);
+                return;
+            }
+            let stat = self.get_stat(false,false,false);
+            self.schedule_irq_with_2nd_response(
+                CdromIRQ::INT3,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                0x08,
+                Some(STD_SECOND_RESPONSE_IRQ_DELAY),
+            );
+        }
+    }
+    // ReadTOC - Command 1Eh --> INT3(stat) --> INT2(stat)
+    fn command_read_toc(&mut self,clock:&mut Clock,second_response:bool) {
+        if second_response {
+            info!("CDROM read_toc completed");
+            let stat = self.get_stat(false,false,false);
+            self.schedule_irq_no_2nd_response(
+                CdromIRQ::INT2,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                true
+            );
+        }
+        else {
+            if self.parameter_fifo.len() != 0 {
+                self.raise_wrong_number_parameters_error(clock);
+                return;
+            }
+            let stat = self.get_stat(false,false,false);
+            self.schedule_irq_with_2nd_response(
+                CdromIRQ::INT3,
+                Some(&[stat]),
+                clock,
+                FIRST_RESPONSE_IRQ_DELAY,
+                0x1E,
+                Some(READ_TOC_SECOND_RESPONSE_IRQ_DELAY),
+            );
+        }
+    }
     // GetlocL - Command 10h --> INT3(amm,ass,asect,mode,file,channel,sm,ci)
     fn command_get_locl(&mut self,clock:&mut Clock) {
         // extract 8 bytes (12..19) from current sector
@@ -603,12 +695,13 @@ impl CDRom {
     // Play - Command 03h (,track) --> INT3(stat) --> optional INT1(report bytes)
     fn command_play(&mut self,clock:&mut Clock) {
         self.state = State::Play;
+        let report_enabled = (self.mode & (1 << 2)) != 0;
         if let Some(track) = self.parameter_fifo.pop_front() {
             let track = BCD::decode(track);
-            info!("CDROM play track {}",track);
+            info!("CDROM play track {} report enabled={report_enabled}",track);
         }
         else {
-            info!("CDROM play with current track");
+            info!("CDROM play with current track report enabled={report_enabled}");
         }
         // TODO
         self.schedule_irq_no_2nd_response(
@@ -879,7 +972,7 @@ impl CDRom {
             self.pending_setloc = None;
             self.mode = 0x20;
             self.read_buffer.clear();
-            self.activate_motor();
+            self.activate_motor(true);
             clock.cancel_where(|event| matches!(event,EventType::CDROM(_)));
             info!("CDROM init command executed");
             self.return_2nd_response_stat(clock);
@@ -991,7 +1084,8 @@ impl CDRom {
      */
     fn command_get_id(&mut self,clock:&mut Clock,second_response:bool) {
         if second_response {
-            if self.is_shell_opened() || self.motor_on {
+            if self.is_shell_opened() {
+                info!("CDROM get_id error: motor: {}",self.motor_on);
                 let stat = self.get_stat(false,false,true);
                 self.schedule_irq_no_2nd_response(
                     CdromIRQ::INT5,
@@ -1004,6 +1098,7 @@ impl CDRom {
             else if let Some(disc) = self.disc.as_ref() {
                 // check for audio disc
                 if disc.is_audio_cd() {
+                    info!("CDROM get_id error: audio-cd");
                     let stat = self.get_stat(true,false,false);
                     self.schedule_irq_no_2nd_response(
                         CdromIRQ::INT3,
@@ -1014,6 +1109,7 @@ impl CDRom {
                     );
                 }
                 else { // Licensed:Mode2         INT3(stat)     INT2(02h,00h, 20h,00h, 53h,43h,45h,4xh)
+                    info!("CDROM get_id completed");
                     let stat = self.get_stat(false,false,false);
                     let mode = if matches!(disc.get_tracks()[0].track_type(),TrackType::Data(2,_)) {
                         0x20
@@ -1047,7 +1143,8 @@ impl CDRom {
                 self.raise_wrong_number_parameters_error(clock);
                 return;
             }
-            if self.is_shell_opened() || self.motor_on || self.busy_status {
+            if self.is_shell_opened() || self.busy_status {
+                info!("CDROM get_id error: motor: {} busy: {}",self.motor_on,self.busy_status);
                 self.schedule_irq_no_2nd_response(
                     CdromIRQ::INT5,
                     Some(&[self.get_stat(false,false,true), INT5Cause::CannotRespondYet as u8]),
@@ -1058,7 +1155,7 @@ impl CDRom {
                 return;
             }
             let stat = self.get_stat(false,false,false);
-            //info!("CDROM get id stat={:02X}",stat);
+            info!("CDROM get id stat={:02X}",stat);
             self.schedule_irq_with_2nd_response(
                 CdromIRQ::INT3,
                 Some(&[stat]),
