@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 use crate::core::cdrom::CDRom;
 use crate::core::clock::{Clock, ClockConfig};
 use crate::core::mdec::MDec;
+use crate::core::spu::Spu;
 
 const DEBUG_MEM : bool = false;
 
@@ -167,6 +168,7 @@ pub struct Bus {
     dma: Rc<RefCell<DMAController>>,
     gpu: Rc<RefCell<GPU>>,
     cdrom: Rc<RefCell<CDRom>>,
+    spu: Rc<RefCell<Spu>>,
     mdec: Rc<RefCell<MDec>>,
     sio0: SIO0,
     io_ports: [u32;IO_PORTS_LEN],
@@ -174,7 +176,6 @@ pub struct Bus {
     cache_control_reg: u32,
     interrupt: Interrupt,
     io_mem_bridge: MemoryBridge<0x1000>,
-    spu_dummy_regs: ArrayMemory,
 }
 
 impl InterruptController for Bus {
@@ -191,7 +192,8 @@ impl Bus {
                dma: &Rc<RefCell<DMAController>>,
                gpu: &Rc<RefCell<GPU>>,
                cdrom: &Rc<RefCell<CDRom>>,
-               mdec:&Rc<RefCell<MDec>>) -> Self {
+               mdec:&Rc<RefCell<MDec>>,
+               spu: &Rc<RefCell<Spu>>) -> Self {
         let main_ram = vec![0; PHYSICAL_MEMORY_SIZE]; // 2MB of main RAM
         let mut bus = Bus {
             clock: Clock::new(clock_config),
@@ -204,6 +206,7 @@ impl Bus {
             dma: dma.clone(),
             gpu: gpu.clone(),
             cdrom: cdrom.clone(),
+            spu: spu.clone(),
             mdec: mdec.clone(),
             sio0: SIO0::new(true,true),
             io_ports: [0;IO_PORTS_LEN],
@@ -211,7 +214,6 @@ impl Bus {
             cache_control_reg: 0,
             interrupt: Interrupt::new(),
             io_mem_bridge: MemoryBridge::<0x1000>::new(),
-            spu_dummy_regs: ArrayMemory::new(&[0;640],false,0,0),
         };
         bus.init_io_bridge();
         bus.timer0.initial_scheduling(&mut bus.clock);
@@ -509,10 +511,26 @@ impl Bus {
                     self.io_mem_bridge.write[fun_offset] = Bus::sio_write;
                 }
                 // SPU
-                0x1F801C00..=0x1F801E80 => {
-                    self.io_mem_bridge.read[fun_offset] = Bus::spu_read;
-                    self.io_mem_bridge.peek[fun_offset] = Bus::spu_peek;
-                    self.io_mem_bridge.write[fun_offset] = Bus::spu_write;
+                0x1F801C00..=0x1F801FFF => {
+                    self.io_mem_bridge.read[fun_offset] = |bus,address,size| {
+                        let read = match size {
+                            8 => bus.spu.borrow_mut().read_register::<8>(address),
+                            16 => bus.spu.borrow_mut().read_register::<16>(address),
+                            32 => bus.spu.borrow_mut().read_register::<32>(address),
+                            _ => unreachable!()
+                        };
+                        ReadMemoryAccess::Read(read,IO_REG_ACCESS_CYCLES)
+                    };
+                    self.io_mem_bridge.peek[fun_offset] = |_bus,_address| Some(0);
+                    self.io_mem_bridge.write[fun_offset] = |bus,address,value,size| {
+                        match size {
+                            8 => bus.spu.borrow_mut().write_register::<8>(address,value),
+                            16 => bus.spu.borrow_mut().write_register::<16>(address,value),
+                            32 => bus.spu.borrow_mut().write_register::<32>(address,value),
+                            _ => unreachable!()
+                        }
+                        WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
+                    }
                 },
                 // DMA
                 0x1F801080|0x1F801090|0x1F8010A0|0x1F8010B0|0x1F8010C0|0x1F8010D0|0x1F8010E0 => {
@@ -736,35 +754,6 @@ impl Bus {
         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
     }
     
-    // SPU handling
-    fn spu_read(&mut self,address:u32,size:usize) -> ReadMemoryAccess {
-        // TODO
-        debug!("Reading SPU register at {:08X} [{size}]",address);
-        let offset = address - 0x1F801C00;
-        match size {
-            8 => self.spu_dummy_regs.read::<8>(offset,false),
-            16 => self.spu_dummy_regs.read::<16>(offset,false),
-            32 => self.spu_dummy_regs.read::<32>(offset,false),
-            _ => panic!("Invalid SPU register read size: {}",size),
-        }
-        //ReadMemoryAccess::Read(0,IO_REG_ACCESS_CYCLES)
-    }
-    fn spu_peek(&self,_address:u32) -> Option<u32> {
-        // TODO
-        Some(0)
-    }
-    fn spu_write(&mut self,address:u32,value:u32,size:usize) -> WriteMemoryAccess {
-        // TODO
-        debug!("Writing SPU register at {:08X} = {:08X} [{size}]",address,value);
-        let offset = address - 0x1F801C00;
-        match size {
-            8 => self.spu_dummy_regs.write::<8>(offset,value),
-            16 => self.spu_dummy_regs.write::<16>(offset,value),
-            32 => self.spu_dummy_regs.write::<32>(offset,value),
-            _ => panic!("Invalid SPU register read size: {}",size),
-        }
-        //WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
-    }
     // DMA handling
     // MADR
     fn dma_read_madr(&mut self,address:u32,_size:usize) -> ReadMemoryAccess {

@@ -6,7 +6,8 @@ use crate::core::memory::{ArrayMemory, BIOS_LEN};
 
 mod core;
 mod log;
-pub mod renderer;
+mod renderer;
+mod audio;
 
 fn main() {
     let config = Config::default();

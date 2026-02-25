@@ -5,7 +5,7 @@ use crate::core::controllers::ControllerButton;
 
 #[derive(Debug, Clone)]
 pub enum GPUEvent {
-    NewFrame(GPUFrameBuffer),
+    NewFrame(GPUFrameBuffer,u8),
     WarpMode(bool),
     Paused(bool),
 }
@@ -42,7 +42,7 @@ impl GPUFrameBuffer {
 pub type EmuStarter<R> = fn(R,mpsc::Receiver<GUIEvent>);
 
 pub trait Renderer {
-    fn render_frame(&mut self, frame: GPUFrameBuffer);
+    fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8);
     fn set_warp_mode(&mut self,enabled:bool);
     fn set_paused(&mut self,paused:bool);
 }

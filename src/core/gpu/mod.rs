@@ -13,6 +13,7 @@ use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::renderer::{GPUFrameBuffer, Renderer};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 /*
 GPU Versions
@@ -667,6 +668,37 @@ impl Vertex {
     }
 }
 
+#[derive(Debug,Copy,Clone)]
+struct Perf {
+    count: u32,
+    acc: u32,
+    last_cpu_perf: f32,
+    duration: Duration,
+    timestamp: Instant,
+}
+
+impl Perf {
+    fn new(duration: Duration) -> Self {
+        Self { count: 0, acc: 0, last_cpu_perf: 0.0, duration, timestamp: Instant::now() }
+    }
+    fn update(&mut self,cpu_perf:u8) {
+        self.count += 1;
+        self.acc += cpu_perf as u32;
+
+        if self.timestamp.elapsed() >= self.duration {
+            self.last_cpu_perf = self.acc as f32 / self.count as f32;
+            self.acc = 0;
+            self.count = 0;
+            self.timestamp = Instant::now();
+        }
+
+    }
+
+    fn get(&self) -> f32 {
+        self.last_cpu_perf
+    }
+}
+
 pub struct GPU {
     renderer: Box<dyn Renderer>,
     vram: Vec<u8>, // little endian format
@@ -692,6 +724,7 @@ pub struct GPU {
     gpu_read_register: u32,
     gp0state: Gp0State,
     show_whole_vram: bool,
+    last_cpu_perf: Perf,
 }
 
 impl GPU {
@@ -717,6 +750,7 @@ impl GPU {
             gpu_read_register: 0,
             gp0state: Gp0State::WaitingCommand,
             show_whole_vram: false,
+            last_cpu_perf: Perf::new(Duration::from_millis(1000)),
         };
 
         gpu.display_config.horizontal_start = 0x260 + 0;
@@ -987,7 +1021,7 @@ impl GPU {
             }
         }
 
-        self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height,self.show_whole_vram));
+        self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height,self.show_whole_vram),self.last_cpu_perf.get() as u8);
     }
 
     pub fn command_completed(&mut self,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
@@ -999,6 +1033,10 @@ impl GPU {
             }
         }
     }
+
+    pub fn set_last_cpu_perf(&mut self,last_cpu_perf:u8) {
+        self.last_cpu_perf.update(last_cpu_perf);
+    }
 }
 
 impl DmaDevice for GPU {
@@ -1008,7 +1046,7 @@ impl DmaDevice for GPU {
     fn dma_request(&self) -> bool {
         true
     }
-    fn dma_write(&mut self, word: u32,clock:&mut Clock,irq_handler:&mut  IrqHandler) {
+    fn dma_write(&mut self, word: u32,clock:&mut Clock,irq_handler:&mut IrqHandler) {
         self.gp0_cmd(word,clock,irq_handler);
     }
     fn dma_read(&mut self) -> u32 {

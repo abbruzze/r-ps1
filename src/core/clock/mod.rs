@@ -21,7 +21,8 @@ pub enum EventType {
     SIO0,
     DoThrottle,
     GPUCommandCompleted,
-    CDROM(CDROMEventType)
+    CDROM(CDROMEventType),
+    Audio44100,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +111,16 @@ impl Clock {
 
     pub fn advance_time(&mut self, cpu_cycles: u64) {
         self.current_time += cpu_cycles;
+    }
+
+    pub fn schedule_audio_sample(&mut self) -> u64 {
+        let target = self.current_time + self.clock_config.cpu_hz / 44_100;
+        let event = ClockEvent {
+            event_type: EventType::Audio44100,
+            timestamp: target,
+        };
+        self.events.push(event);
+        target
     }
 
     pub fn schedule(&mut self, event_type: EventType, cpu_cycles_ahead: u64) -> u64 {

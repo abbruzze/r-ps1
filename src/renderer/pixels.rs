@@ -28,8 +28,8 @@ impl GPUPixelsRenderer {
 }
 
 impl Renderer for GPUPixelsRenderer {
-    fn render_frame(&mut self, frame: GPUFrameBuffer) {
-        let _ = self.event_proxy.send_event(GPUEvent::NewFrame(frame));
+    fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8) {
+        let _ = self.event_proxy.send_event(GPUEvent::NewFrame(frame,last_performance));
     }
     fn set_warp_mode(&mut self,enabled:bool) {
         let _ = self.event_proxy.send_event(GPUEvent::WarpMode(enabled));
@@ -70,6 +70,7 @@ struct PixelsRenderer {
     warp_mode: bool,
     paused: bool,
     debug_mode: bool,
+    last_performance: u8,
 }
 
 impl PixelsRenderer {
@@ -88,6 +89,7 @@ impl PixelsRenderer {
             warp_mode: false,
             paused: false,
             debug_mode: false,
+            last_performance: 0,
         }
     }
 
@@ -108,10 +110,10 @@ impl PixelsRenderer {
                     if self.debug_mode {
                         info.push_str(" (debug mode)");
                     }
-                    window.set_title(&format!("PS1 Emulator - FPS: {:.2}{info} [{}x{}]", fps,self.width,self.height));
+                    window.set_title(&format!("PS1 Emulator - FPS: {:.2}{info} CPU: {:3}% [{}x{}]", fps,self.last_performance,self.width,self.height));
                 }
                 else {
-                    window.set_title(&format!("PS1 Emulator - FPS: {:.2} [{}x{}]", fps,self.width,self.height));
+                    window.set_title(&format!("PS1 Emulator - FPS: {:.2} CPU: {:3}% [{}x{}]", fps,self.last_performance,self.width,self.height));
                 }
             }
             self.fps_frames = 0;
@@ -119,7 +121,8 @@ impl PixelsRenderer {
         }
     }
 
-    fn new_frame(&mut self, frame: &GPUFrameBuffer) {
+    fn new_frame(&mut self, frame: &GPUFrameBuffer,last_performance:u8) {
+        self.last_performance = last_performance;
         if let Some(pixels) = &mut self.pixels {
             if frame.crt_width != self.width || frame.crt_height != self.height {
                 println!("PixelsRenderer: Frame size changed from {}x{} to {}x{}", self.width, self.height, frame.visible_width, frame.visible_height);
@@ -191,8 +194,8 @@ impl ApplicationHandler<GPUEvent> for PixelsRenderer {
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: GPUEvent) {
         match event {
-            GPUEvent::NewFrame(frame) => {
-                self.new_frame(&frame);
+            GPUEvent::NewFrame(frame,last_performance) => {
+                self.new_frame(&frame,last_performance);
             }
             GPUEvent::WarpMode(on) => {
                 self.warp_mode = on;

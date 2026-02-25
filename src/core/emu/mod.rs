@@ -1,3 +1,5 @@
+use crate::audio::{AudioDevice, AudioSample};
+use crate::core::cdrom::CDRom;
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
 use crate::core::cpu::{disassembler, Cpu};
@@ -7,10 +9,13 @@ use crate::core::debugger::{DebuggerResponse, RunMode};
 use crate::core::dma::{DMAController, DmaDevice, DummyDMAChannel};
 use crate::core::gpu::GPU;
 use crate::core::interrupt::IrqHandler;
+use crate::core::mdec::{MDec, MDecIn, MDecOut};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{ArrayMemory, Memory, ReadMemoryAccess};
+use crate::core::spu::{AdpcmInterpolation, Spu};
 use crate::log::Logger;
 use crate::renderer::{GUIEvent, Renderer};
+use build_time::build_time_local;
 use std::cell::RefCell;
 use std::process::exit;
 use std::rc::Rc;
@@ -19,12 +24,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use std::{fs, io, thread};
 use thread::spawn;
-use build_time::build_time_local;
 use tracing::{error, info};
-use crate::core::cdrom::CDRom;
-use crate::core::mdec::{MDec, MDecIn, MDecOut};
+use crate::audio::cpal::CpalAudioDevice;
 
-const THROTTLE_RES : u64 = 100;
+const THROTTLE_RES : u64 = 10;
 const THROTTLE_ADJ_FACTOR : f32 = 1.0;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
@@ -38,6 +41,8 @@ pub struct Emulator {
     cdrom: Rc<RefCell<CDRom>>,
     dma: Rc<RefCell<DMAController>>,
     mdec: Rc<RefCell<MDec>>,
+    spu: Rc<RefCell<Spu>>,
+    audio_device: Option<Box<dyn AudioDevice>>,
     just_entered_in_step_mode: bool,
     last_cycles: usize,
     run_mode: RunMode,
@@ -61,22 +66,22 @@ impl Emulator {
         let mdec_out = Rc::new(RefCell::new(MDecOut::new(&mdec)));
         let gpu = Rc::new(RefCell::new(GPU::new(renderer)));
         let cdrom = Rc::new(RefCell::new(CDRom::new()));
-        let spu = Rc::new(RefCell::new(DummyDMAChannel {}));
+        let spu = Rc::new(RefCell::new(Spu::new(AdpcmInterpolation::default())));
         let pio = Rc::new(RefCell::new(DummyDMAChannel {}));
         let otc = Rc::new(RefCell::new(DummyDMAChannel {}));
         
         let devices = [
             mdec_in as Rc<RefCell<dyn DmaDevice>>,
-            mdec_out as Rc<RefCell<dyn DmaDevice>>,
-            gpu.clone() as Rc<RefCell<dyn DmaDevice>>,
+            mdec_out,
+            gpu.clone(),
             cdrom.clone(),
-            spu,
+            spu.clone(),
             pio,
             otc
         ];
         
         let dma = Rc::new(RefCell::new(DMAController::new(&devices)));
-        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu,&cdrom,&mdec);
+        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu,&cdrom,&mdec,&spu);
 
         let emu = Self {
             cpu,bus,
@@ -84,6 +89,8 @@ impl Emulator {
             cdrom,
             dma,
             mdec,
+            spu,
+            audio_device: None,
             just_entered_in_step_mode: false,
             last_cycles: 0,
             run_mode: RunMode::FreeMode,
@@ -184,8 +191,14 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Team Racing\\CTR - Crash Team Racing (EU).cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Bandicoot 1.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
+        }
+
+        // starting audio device
+        let mut audio_cpal = CpalAudioDevice::new();
+        if let Ok(()) = audio_cpal.start() {
+            self.audio_device = Some(Box::new(audio_cpal));
         }
 
         'main_loop: loop {
@@ -262,13 +275,7 @@ impl Emulator {
             }
             EventType::DoThrottle => {
                 if !self.warp_mode_enabled {
-                    let elapsed_micros = self.last_throttle_timestamp.elapsed().as_micros() as u64;
-                    self.reschedule_throttling();
-                    const EXPECTED_MICROS: u64 = 1_000_000 / THROTTLE_RES;
-
-                    if elapsed_micros < EXPECTED_MICROS {
-                        thread::sleep(Duration::from_micros(((EXPECTED_MICROS as f32 - elapsed_micros as f32) * THROTTLE_ADJ_FACTOR) as u64));
-                    }
+                    self.do_throttle();
                 }
             }
             EventType::GPUCommandCompleted => {
@@ -277,7 +284,30 @@ impl Emulator {
             EventType::CDROM(event) => {
                 self.cdrom.borrow_mut().on_event(event,self.bus.get_clock_mut(),irq_handler);
             }
+            EventType::Audio44100 => {
+                let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&self.cdrom.borrow_mut(),irq_handler));
+                if let Some(audio_device) = self.audio_device.as_mut() {
+                    if !self.warp_mode_enabled {
+                        audio_device.play_sample(sample);
+                    }
+                    // reschedule event
+                    self.bus.get_clock_mut().schedule_audio_sample();
+                }
+            }
         }
+    }
+    
+    fn do_throttle(&mut self) {
+        let elapsed_micros = self.last_throttle_timestamp.elapsed().as_micros() as u64;
+        self.reschedule_throttling();
+        const EXPECTED_MICROS: u64 = 1_000_000 / THROTTLE_RES;
+
+        if elapsed_micros < EXPECTED_MICROS {
+            thread::sleep(Duration::from_micros(((EXPECTED_MICROS as f32 - elapsed_micros as f32) * THROTTLE_ADJ_FACTOR) as u64));
+        }
+
+        let perf = (elapsed_micros as f32 / EXPECTED_MICROS as f32 * 100.0) as u8;
+        self.gpu.borrow_mut().set_last_cpu_perf(perf);
     }
 
     fn reschedule_throttling(&mut self) {
