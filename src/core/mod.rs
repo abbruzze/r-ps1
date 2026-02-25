@@ -12,6 +12,7 @@ mod sio;
 pub mod clock;
 pub mod cdrom;
 mod mdec;
+mod spu;
 
 // CPU Clock   =  33.868800MHz (44100Hz*300h)
 pub const CPU_CLOCK : usize = 33_868_800;
