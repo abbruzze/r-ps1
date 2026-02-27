@@ -738,6 +738,9 @@ impl DMAController {
                     let (dma, cycles_done) = self.do_dma(bus, irq_handler);
                     dma_in_progress |= dma;
                     self.dma_pending_cycles += cycles_done;
+                    if self.dma_in_progress_on_channel.is_none() {
+                        break; // if no channel is in progress, exit, because nothing can happen to change dma settings
+                    }
                 }
             }
         }

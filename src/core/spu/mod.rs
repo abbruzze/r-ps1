@@ -1,3 +1,5 @@
+// Thanks to https://github.com/jsgroth/CoffeePSX
+
 use std::array;
 use std::cell::Cell;
 use std::ops::{Index, IndexMut, Range};

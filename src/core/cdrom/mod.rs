@@ -1004,14 +1004,23 @@ impl CDRom {
       2   Report      (0=Off, 1=Enable Report-Interrupts for Audio Play)
       1   AutoPause   (0=Off, 1=Auto Pause upon End of Track) ;for Audio Play
       0   CDDA        (0=Off, 1=Allow to Read CD-DA Sectors; ignore missing EDC)
+
+      The "Ignore Bit" does reportedly force a sector size of 2328 bytes (918h), however, that doesn't seem to be true.
+      Instead, Bit4 seems to cause the controller to ignore the sector size in Bit5 (instead, the size is kept from the most recent Setmode command which didn't have Bit4 set).
      */
     fn command_set_mode(&mut self,clock:&mut Clock) {
         if self.parameter_fifo.len() != 1 {
             self.raise_wrong_number_parameters_error(clock);
             return;
         }
+        let prev_mode = self.mode;
         self.mode = self.parameter_fifo.pop_front().unwrap();
-        info!("CDROM set mode to {:02X}, speed={:?} sector size={:?}",self.mode,self.get_speed(),self.get_sector_size());
+        let ignore_bit = (self.mode & (1 << 4)) != 0;
+        if ignore_bit {
+            // preserve last sector size bit
+            self.mode = (self.mode & !(1 << 5)) | (prev_mode & (1 << 5));
+        }
+        info!("CDROM set mode to {:02X}, speed={:?} sector size={:?} ignore_bit={ignore_bit}",self.mode,self.get_speed(),self.get_sector_size());
         self.return_1st_response_stat(clock);
     }
 

@@ -28,7 +28,7 @@ use tracing::{error, info};
 use crate::audio::cpal::CpalAudioDevice;
 
 const THROTTLE_RES : u64 = 10;
-const THROTTLE_ADJ_FACTOR : f32 = 1.0;
+const THROTTLE_ADJ_FACTOR : f32 = 1.8;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
@@ -196,10 +196,12 @@ impl Emulator {
         }
 
         // starting audio device
-        let mut audio_cpal = CpalAudioDevice::new();
+        let mut audio_cpal = CpalAudioDevice::new(50);
         if let Ok(()) = audio_cpal.start() {
             self.audio_device = Some(Box::new(audio_cpal));
         }
+        // schedule first audio event
+        self.bus.get_clock_mut().schedule_audio_sample();
 
         'main_loop: loop {
             if self.just_entered_in_step_mode {
@@ -274,9 +276,8 @@ impl Emulator {
                 sio0.on_tx_transmitted(clock,irq_handler);
             }
             EventType::DoThrottle => {
-                if !self.warp_mode_enabled {
-                    self.do_throttle();
-                }
+                self.do_throttle();
+
             }
             EventType::GPUCommandCompleted => {
                 self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
@@ -296,17 +297,20 @@ impl Emulator {
             }
         }
     }
-    
+
+    #[inline(always)]
     fn do_throttle(&mut self) {
         let elapsed_micros = self.last_throttle_timestamp.elapsed().as_micros() as u64;
         self.reschedule_throttling();
-        const EXPECTED_MICROS: u64 = 1_000_000 / THROTTLE_RES;
 
-        if elapsed_micros < EXPECTED_MICROS {
-            thread::sleep(Duration::from_micros(((EXPECTED_MICROS as f32 - elapsed_micros as f32) * THROTTLE_ADJ_FACTOR) as u64));
+        const EXPECTED_MICROS: u64 = 1_000_000 / THROTTLE_RES;
+        if !self.warp_mode_enabled {
+            if elapsed_micros < EXPECTED_MICROS {
+                thread::sleep(Duration::from_micros(((EXPECTED_MICROS as f32 - elapsed_micros as f32) * THROTTLE_ADJ_FACTOR) as u64));
+            }
         }
 
-        let perf = (elapsed_micros as f32 / EXPECTED_MICROS as f32 * 100.0) as u8;
+        let perf = (EXPECTED_MICROS as f32 / elapsed_micros as f32 * 100.0) as u8;
         self.gpu.borrow_mut().set_last_cpu_perf(perf);
     }
 
@@ -329,10 +333,10 @@ impl Emulator {
                 }
                 GUIEvent::WarpMode => {
                     self.warp_mode_enabled ^= true;
-                    self.bus.get_clock_mut().cancel(EventType::DoThrottle);
-                    if !self.warp_mode_enabled {
-                        self.reschedule_throttling();
-                    }
+                    // self.bus.get_clock_mut().cancel(EventType::DoThrottle);
+                    // if !self.warp_mode_enabled {
+                    //     self.reschedule_throttling();
+                    // }
                     self.gpu.borrow_mut().get_renderer_mut().set_warp_mode(self.warp_mode_enabled);
                     info!("Throttling enabled: {}",!self.warp_mode_enabled);
                 }
