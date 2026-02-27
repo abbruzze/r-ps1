@@ -28,11 +28,53 @@ use tracing::{error, info};
 use crate::audio::cpal::CpalAudioDevice;
 
 const THROTTLE_RES : u64 = 10;
-const THROTTLE_ADJ_FACTOR : f32 = 1.8;
+const THROTTLE_ADJ_FACTOR : f32 = 1.85;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
 pub const EMU_BUILD_DATE_TIME : &str = build_time_local!("%d/%m/%Y %H:%M:%S");
+
+struct Perf {
+    last_timestamp: Instant,
+    last_cycles: u64,
+    initialized: bool,
+    duration: Duration,
+}
+
+impl Perf {
+    pub fn new(duration: Duration) -> Self {
+        Self {
+            last_timestamp: Instant::now(),
+            last_cycles: 0,
+            initialized: false,
+            duration,
+        }
+    }
+
+    pub fn throttle(&mut self,elapsed_cycles:u64,clock_config:&ClockConfig,warp_mode:bool) -> u16 {
+        if !self.initialized {
+            self.initialized = true;
+            self.last_cycles = elapsed_cycles;
+            self.last_timestamp = Instant::now();
+            return 0;
+        }
+        //self.counter += 1;
+        let elapsed_micros = self.last_timestamp.elapsed().as_micros() as u64;
+        let emulated_micros = (((elapsed_cycles - self.last_cycles) as f32 / clock_config.cpu_hz as f32) * 1_000_000.0) as u64;
+
+        if !warp_mode && emulated_micros > elapsed_micros {
+            //println!("Sleeping for {} micros. elapsed={} emulated={}",emulated_micros - elapsed_micros,elapsed_micros,emulated_micros);
+            thread::sleep(Duration::from_micros(emulated_micros - elapsed_micros));
+        }
+
+        if elapsed_micros > self.duration.as_micros() as u64 {
+            self.last_cycles = elapsed_cycles;
+            self.last_timestamp = Instant::now();
+        }
+
+        ((emulated_micros as f32 / elapsed_micros as f32) * 100.0) as u16
+    }
+}
 
 pub struct Emulator {
     cpu: Cpu,
@@ -54,6 +96,7 @@ pub struct Emulator {
     debug_vram_mode: bool,
     last_throttle_timestamp: Instant,
     dma_in_progress:bool,
+    perf: Perf,
 }
 
 impl Emulator {
@@ -102,6 +145,7 @@ impl Emulator {
             debug_vram_mode: false,
             last_throttle_timestamp: Instant::now(),
             dma_in_progress: false,
+            perf: Perf::new(Duration::from_millis(1000)),
         };
 
         emu
@@ -131,8 +175,6 @@ impl Emulator {
 
         // send first hblank event
         self.gpu.borrow_mut().send_first_hblank_event(self.bus.get_clock_mut());
-        // send first throttle event
-        self.reschedule_throttling();
 
         let (loop_tx_cmd, debugger_rx_cmd) = mpsc::channel::<DebuggerResponse>();
         let (debugger_tx_cmd, loop_rx_cmd) = mpsc::channel::<DebuggerCommand>();
@@ -191,12 +233,12 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Bandicoot 1.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\RidgeRacer\\Ridge Racer (USA).cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 
         // starting audio device
-        let mut audio_cpal = CpalAudioDevice::new(50);
+        let mut audio_cpal = CpalAudioDevice::new(60);
         if let Ok(()) = audio_cpal.start() {
             self.audio_device = Some(Box::new(audio_cpal));
         }
@@ -275,10 +317,6 @@ impl Emulator {
                 let (sio0,clock) = self.bus.get_sio0_and_clock_mut();
                 sio0.on_tx_transmitted(clock,irq_handler);
             }
-            EventType::DoThrottle => {
-                self.do_throttle();
-
-            }
             EventType::GPUCommandCompleted => {
                 self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
             }
@@ -294,34 +332,11 @@ impl Emulator {
                     // reschedule event
                     self.bus.get_clock_mut().schedule_audio_sample();
                 }
+                let clock = self.bus.get_clock();
+                let perf = self.perf.throttle(clock.current_time(),clock.get_clock_config(),self.warp_mode_enabled);
+                self.gpu.borrow_mut().set_last_cpu_perf(perf);
             }
         }
-    }
-
-    #[inline(always)]
-    fn do_throttle(&mut self) {
-        let elapsed_micros = self.last_throttle_timestamp.elapsed().as_micros() as u64;
-        self.reschedule_throttling();
-
-        const EXPECTED_MICROS: u64 = 1_000_000 / THROTTLE_RES;
-        if !self.warp_mode_enabled {
-            if elapsed_micros < EXPECTED_MICROS {
-                thread::sleep(Duration::from_micros(((EXPECTED_MICROS as f32 - elapsed_micros as f32) * THROTTLE_ADJ_FACTOR) as u64));
-            }
-        }
-
-        let perf = (EXPECTED_MICROS as f32 / elapsed_micros as f32 * 100.0) as u8;
-        self.gpu.borrow_mut().set_last_cpu_perf(perf);
-    }
-
-    fn reschedule_throttling(&mut self) {
-        self.last_throttle_timestamp = Instant::now();
-        let cpu_clock = self.bus.get_clock().get_clock_config().cpu_hz;
-        self.bus.get_clock_mut().schedule(EventType::DoThrottle, cpu_clock / THROTTLE_RES);
-    }
-
-    fn cancel_throttling(&mut self) {
-        self.bus.get_clock_mut().cancel(EventType::DoThrottle);
     }
 
     fn check_input(&mut self) {
@@ -333,22 +348,12 @@ impl Emulator {
                 }
                 GUIEvent::WarpMode => {
                     self.warp_mode_enabled ^= true;
-                    // self.bus.get_clock_mut().cancel(EventType::DoThrottle);
-                    // if !self.warp_mode_enabled {
-                    //     self.reschedule_throttling();
-                    // }
                     self.gpu.borrow_mut().get_renderer_mut().set_warp_mode(self.warp_mode_enabled);
                     info!("Throttling enabled: {}",!self.warp_mode_enabled);
                 }
                 GUIEvent::Paused => {
                     self.paused ^= true;
                     self.gpu.borrow_mut().get_renderer_mut().set_paused(self.paused);
-                    if !self.paused {
-                        self.reschedule_throttling();
-                    }
-                    else {
-                        self.cancel_throttling();
-                    }
                 }
                 GUIEvent::VRAMDebugMode => {
                     self.debug_vram_mode ^= true;

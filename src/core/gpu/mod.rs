@@ -681,7 +681,7 @@ impl Perf {
     fn new(duration: Duration) -> Self {
         Self { count: 0, acc: 0, last_cpu_perf: 0.0, duration, timestamp: Instant::now() }
     }
-    fn update(&mut self,cpu_perf:u8) {
+    fn update(&mut self,cpu_perf:u16) {
         self.count += 1;
         self.acc += cpu_perf as u32;
 
@@ -1034,7 +1034,7 @@ impl GPU {
         }
     }
 
-    pub fn set_last_cpu_perf(&mut self,last_cpu_perf:u8) {
+    pub fn set_last_cpu_perf(&mut self,last_cpu_perf:u16) {
         self.last_cpu_perf.update(last_cpu_perf);
     }
 }

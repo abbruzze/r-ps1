@@ -19,7 +19,6 @@ pub enum EventType {
     Timer1,
     Timer2,
     SIO0,
-    DoThrottle,
     GPUCommandCompleted,
     CDROM(CDROMEventType),
     Audio44100,
