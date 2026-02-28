@@ -266,6 +266,10 @@ impl DmaDevice for Spu {
         let high_halfword = self.read_data_port() as u32;
         low_halfword | (high_halfword << 16)
     }
+
+    fn dma_cycles_per_word(&self) -> usize {
+        1
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -321,12 +325,10 @@ impl Spu {
 
         // Grab current CD audio samples
         let (raw_cd_l, raw_cd_r) = if self.control.cd_audio_enabled {
-            // TODO
-            (0,0)
-            // apply_volume_matrix(
-            //     cdrom.current_audio_sample(),
-            //     cdrom.spu_volume_matrix(),
-            // )
+            apply_volume_matrix(
+                cdrom.get_audio_sample(),
+                cdrom.spu_volume_matrix(),
+            )
         } else {
             (0, 0)
         };

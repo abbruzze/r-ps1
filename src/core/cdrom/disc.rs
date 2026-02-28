@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use crate::core::cdrom::{cue, util, Region};
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
@@ -115,7 +115,7 @@ impl BCD {
 }
 
 #[derive(Debug)]
-pub struct AudioLeftRight(u16,u16);
+pub struct AudioLeftRight(pub i16,pub i16);
 
 #[derive(Debug)]
 pub enum TrackType {
@@ -136,6 +136,26 @@ pub struct DataSector {
 impl DataSector {
     fn empty(lba:u32) -> Self {
         Self { lba, sector: [0; SECTOR_SIZE as usize] }
+    }
+
+    /*
+    Subheader byte - Submode (SM)
+      0   End of Record (EOR) (all Volume Descriptors, and all sectors with EOF)
+      1   Video     ;\Sector Type (usually ONE of these bits should be set)
+      2   Audio     ; Note: PSX .STR files are declared as Data (not as Video)
+      3   Data      ;/
+      4   Trigger           (for application use)
+      5   Form2             (0=Form1/800h-byte data, 1=Form2, 914h-byte data)
+      6   Real Time (RT)
+      7   End of File (EOF) (or end of Directory/PathTable/VolumeTerminator)
+     */
+    pub fn is_audio_adpcm(&self) -> bool {
+        let sub_mode = self.sector[18];
+        (sub_mode & ((1 << 2) | (1 << 6))) == (1 << 2) | (1 << 6)
+    }
+
+    pub fn matches_file_and_channel(&self,file_id:u8,channel_id:u8) -> bool {
+        self.sector[16] == file_id && self.sector[17] == channel_id
     }
 
     /*
@@ -174,7 +194,7 @@ impl DataSector {
     pub fn get_audio_data(&self) -> Vec<AudioLeftRight> {
         let mut result = Vec::new();
         for i in 0..(self.sector.len() / 4) {
-            result.push(AudioLeftRight(u16::from_le_bytes([self.sector[i * 4], self.sector[i * 4 + 1]]),u16::from_le_bytes([self.sector[i * 4 + 2], self.sector[i * 4 + 3]])));
+            result.push(AudioLeftRight(i16::from_le_bytes([self.sector[i * 4], self.sector[i * 4 + 1]]),i16::from_le_bytes([self.sector[i * 4 + 2], self.sector[i * 4 + 3]])));
         }
         result
     }
@@ -221,22 +241,24 @@ impl Track {
     }
 
     fn new(file_id:u8,number:u8,track_type:TrackType,start_time:DiscTime,end_time:DiscTime) -> Self {
-        let (pre_gap,post_gap) = match track_type {
-            TrackType::Audio => (DiscTime::ZERO_TIME,DiscTime::ZERO_TIME),
-            TrackType::Data(_,_) => (DiscTime::_2_SEC_TIME,DiscTime::_2_SEC_TIME)
-        };
-        Self { file_id, number, track_type, start_time: start_time.add(&pre_gap), end_time: end_time.add(&pre_gap),pre_gap, post_gap }
+        match track_type {
+            TrackType::Audio => {
+                Self { file_id, number, track_type, start_time, end_time, pre_gap: DiscTime::_2_SEC_TIME, post_gap: DiscTime::ZERO_TIME }
+            }
+            TrackType::Data(_,_) => {
+                Self { file_id, number, track_type, start_time: start_time.add(&DiscTime::_2_SEC_TIME), end_time: end_time.add(&DiscTime::_2_SEC_TIME),pre_gap: DiscTime::_2_SEC_TIME, post_gap: DiscTime::_2_SEC_TIME }
+            }
+        }
     }
 
     fn contains_msf(&self,msf:DiscTime) -> bool {
-        msf >= self.start_time && msf < self.end_time
+        msf >= self.start_time.sub(&self.pre_gap) && msf < self.end_time.add(&self.post_gap)
     }
 
     fn read_sector_into(&mut self,file:&mut File, msf:DiscTime, buffer: &mut [u8]) -> std::io::Result<bool> {
         if msf < self.start_time || msf > self.end_time {
-            // TODO: read fake sector
-            todo!("read fake sector");
-            return Ok(false);
+            self.fill_fake_sector(msf, buffer);
+            return Ok(true);
         }
 
         let offset : u64 = (msf.to_lba() - self.start_time.to_lba()) as u64 * SECTOR_SIZE as u64;
@@ -244,6 +266,17 @@ impl Track {
         file.read_exact(buffer)?;
 
         Ok(true)
+    }
+
+    fn fill_fake_sector(&self,msf:DiscTime, buffer: &mut [u8]) {
+        match self.track_type {
+            TrackType::Audio => {
+                buffer.fill(0);
+            }
+            TrackType::Data(_,_) => {
+                todo!("fill fake data sector");
+            }
+        }
     }
 }
 
@@ -254,6 +287,7 @@ pub struct Disc {
     files:Vec<(File,PathBuf)>,
     region: Option<Region>,
     head_position: DiscTime,
+    track_number: u8,
 }
 
 impl Disc {
@@ -272,6 +306,7 @@ impl Disc {
             files: Vec::new(),
             region: None,
             head_position: DiscTime::new(0,0,0),
+            track_number: 0,
         };
 
         let mut last_time = DiscTime::new(0,0,0);
@@ -344,9 +379,10 @@ impl Disc {
 
     pub fn read_sector(&mut self) -> Option<DataSector> {
         let msf = self.head_position;
-
-        match self.find_track(msf) {
+        let mut track_number : Option<u8> = None;
+        let resp = match self.find_track(msf) {
             Some((track,file,file_path)) => {
+                track_number = Some(track.track_number());
                 info!("Reading sector {} from track {} in '{}'",msf,track.track_number(),file_path.display());
                 let mut sector = DataSector::empty(msf.to_lba());
                 match track.read_sector_into(file, msf, &mut sector.sector) {
@@ -361,8 +397,16 @@ impl Disc {
                     }
                 }
             },
-            None => None
+            None => {
+                error!("Cannot read sector {}: track not found",msf);
+                None
+            }
+        };
+
+        if let Some(tn) = track_number {
+            self.track_number = tn - 1;
         }
+        resp
     }
 
     pub fn seek_sector(&mut self,msf:DiscTime) {
@@ -373,8 +417,9 @@ impl Disc {
         self.head_position
     }
 
-    pub fn set_next_sector_head_position(&mut self) {
+    pub fn set_next_sector_head_position(&mut self) -> bool {
         self.head_position = self.head_position.add(&DiscTime::FRAME_TIME);
+        self.head_position >= self.tracks[self.track_number as usize].end_time
     }
     
     pub fn get_current_track(&self) -> Option<&Track> {

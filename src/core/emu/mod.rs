@@ -233,7 +233,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\RidgeRacer\\Ridge Racer (USA).cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\Crash Bandicoot 1.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 

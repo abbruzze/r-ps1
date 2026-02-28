@@ -2,7 +2,7 @@ use crate::core::clock::Clock;
 use crate::core::interrupt::{InterruptController, InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::rc::Rc;
 use tracing::{debug, info, warn};
 
@@ -146,8 +146,8 @@ struct DMAChannel {
     device: Rc<RefCell<dyn DmaDevice>>,
     sync_mode: SyncMode,
     transfer_direction: TransferDirection,
-    remaining_words: u16,
-    remaining_blocks: u16,
+    pub remaining_words: u16,
+    pub remaining_blocks: u16,
     waiting_next_block: bool,
     chopping_window_words: usize,
     chopping_window_cycles: usize,
@@ -304,8 +304,12 @@ impl DMAChannel {
             }
         }
     }
+
+    #[inline(always)]
     fn dma_read_write_word(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> bool  {
-        if !self.device.borrow().is_dma_ready() {
+        let mut dma_device = self.device.borrow_mut();
+
+        if !dma_device.is_dma_ready() {
             return false;
         }
         let target = self.madr;
@@ -313,7 +317,7 @@ impl DMAChannel {
         self.madr &= 0xFF_FFFC;
         match self.transfer_direction {
             TransferDirection::DeviceToRAM => {
-                let device_read = self.device.borrow_mut().dma_read();
+                let device_read = dma_device.dma_read();
                 match bus.write::<32>(target, device_read) {
                     WriteMemoryAccess::Write(_) => {}
                     _ => {
@@ -324,7 +328,7 @@ impl DMAChannel {
             }
             TransferDirection::RAMToDevice => {
                 match bus.read::<32>(target, false) {
-                    ReadMemoryAccess::Read(mem_read,_) => self.device.borrow_mut().dma_write(mem_read,bus.get_clock_mut(),irq_handler),
+                    ReadMemoryAccess::Read(mem_read,_) => dma_device.dma_write(mem_read,bus.get_clock_mut(),irq_handler),
                     _ => {
                         warn!("DMA Bus error while accessing address {:08X}",target);
                         self.bus_error = true
@@ -345,22 +349,24 @@ impl DMAChannel {
                 return DMAResult::LeaveBus;
             }
         }
-        if !self.dma_read_write_word(bus,irq_handler) {
-            return DMAResult::LeaveBus;
-        }
-        self.remaining_words = self.remaining_words.wrapping_sub(1);
-        if self.remaining_words == 0 {
-            self.remaining_blocks = self.remaining_blocks.wrapping_sub(1);
-            if self.remaining_blocks == 0 {
-                self.transfer_completed();
-                return DMAResult::BlockFinished(true)
+
+        while self.remaining_words > 0 {
+            if !self.dma_read_write_word(bus,irq_handler) {
+                return DMAResult::LeaveBus;
             }
+            self.remaining_words = self.remaining_words.wrapping_sub(1);
+        }
+
+        self.remaining_blocks = self.remaining_blocks.wrapping_sub(1);
+        if self.remaining_blocks == 0 {
+            self.transfer_completed();
+            DMAResult::BlockFinished(true)
+        }
+        else {
             self.update_remaining_blocks_words(true);
             self.waiting_next_block = true;
-            return DMAResult::BlockFinished(false);
-        };
-
-        DMAResult::InProgress
+            DMAResult::BlockFinished(false)
+        }
     }
     fn do_dma_linked_list(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
         if !matches!(self.transfer_direction,TransferDirection::RAMToDevice) {
@@ -771,7 +777,7 @@ impl DMAController {
                     if self.channels[channel].is_ready() {
                         dma_cycles = self.channels[channel].get_cycles_per_word();
                         channel_found = Some(channel);
-                        debug!("DMA found channel to activate: #{channel}");
+                        debug!("DMA found channel to activate: #{channel} words={} blocks={}",self.channels[channel].remaining_words,self.channels[channel].remaining_blocks);
                         break;
                     }
                 }

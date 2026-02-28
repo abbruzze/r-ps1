@@ -7,6 +7,7 @@ pub enum CDROMEventType {
     CdRomRaiseIrq { irq: u8, completed: bool },
     CdRomRaiseIrqFor2ndResponse { irq: u8, cmd_to_complete: u8, delay: Option<u64> },
     ReadNextSector(u8),
+    PlaySample(u16),
 }
 
 // Tipo di evento
