@@ -705,7 +705,7 @@ impl Bus {
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.cdrom.borrow().peek_1() as u32);
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         let mut irq_handler = IrqHandler::new();
-                        bus.cdrom.borrow_mut().write_1(value as u8,&mut bus.clock,&mut irq_handler);
+                        bus.cdrom.borrow_mut().write_1(value as u8);
                         irq_handler.forward_to_controller(bus);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }
@@ -730,7 +730,7 @@ impl Bus {
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.cdrom.borrow().read_3() as u32);
                     self.io_mem_bridge.write[fun_offset] = |bus,_address,value,_size| {
                         let mut irq_handler = IrqHandler::new();
-                        bus.cdrom.borrow_mut().write_3(value as u8,&mut irq_handler);
+                        bus.cdrom.borrow_mut().write_3(value as u8);
                         irq_handler.forward_to_controller(bus);
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }

@@ -320,11 +320,10 @@ impl Emulator {
             EventType::GPUCommandCompleted => {
                 self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
             }
-            EventType::CDROM(event) => {
-                self.cdrom.borrow_mut().on_event(event,self.bus.get_clock_mut(),irq_handler);
-            }
             EventType::Audio44100 => {
-                let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&self.cdrom.borrow_mut(),irq_handler));
+                let mut cdrom = self.cdrom.borrow_mut();
+                cdrom.clock_44100hz(irq_handler);
+                let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&cdrom,irq_handler));
                 if let Some(audio_device) = self.audio_device.as_mut() {
                     if !self.warp_mode_enabled {
                         audio_device.play_sample(sample);

@@ -2,14 +2,6 @@ use std::collections::BinaryHeap;
 use std::cmp::Ordering;
 use std::process::exit;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CDROMEventType {
-    CdRomRaiseIrq { irq: u8, completed: bool },
-    CdRomRaiseIrqFor2ndResponse { irq: u8, cmd_to_complete: u8, delay: Option<u64> },
-    ReadNextSector(u8),
-    PlaySample(u16),
-}
-
 // Tipo di evento
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventType {
@@ -21,7 +13,6 @@ pub enum EventType {
     Timer2,
     SIO0,
     GPUCommandCompleted,
-    CDROM(CDROMEventType),
     Audio44100,
 }
 
