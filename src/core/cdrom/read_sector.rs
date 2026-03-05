@@ -26,7 +26,9 @@ impl CDRom {
                     }
                     else {
                         let data = sector.get_mode2_user_data(&sector_size);
-                      
+                        if self.data_buffer.len() > 0 {
+                            warn!("Reading next sector with old bytes not read: {}",self.data_buffer.len());
+                        }
                         send_int1 = true;
                         self.last_sector.clear();
                         self.last_sector.extend(data);

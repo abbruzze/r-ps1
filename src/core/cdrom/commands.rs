@@ -117,7 +117,7 @@ impl CDRom {
         match cmd {
             Command::Nop => self.command_nop(),
             Command::Setloc => self.command_setloc(),
-            Command::SeekL => self.command_seekl(second_response),
+            Command::SeekL|Command::SeekP => self.command_seek(second_response),
             Command::Test => self.command_test(),
             Command::GetID => self.command_get_id(second_response),
             Command::ReadTOC => self.command_read_toc(second_response),
@@ -251,7 +251,7 @@ impl CDRom {
         }
     }
     // SeekL - Command 15h --> INT3(stat) --> INT2(stat)
-    fn command_seekl(&mut self, second_response: bool) -> CommandState {
+    fn command_seek(&mut self, second_response: bool) -> CommandState {
         if second_response {
             info!("CDROM seeking loc {:?} completed",self.pending_setloc);
             if let Some(disc) = self.disc.as_mut() {
