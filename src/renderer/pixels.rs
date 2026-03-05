@@ -1,5 +1,5 @@
-use super::GUIEvent;
-use super::{EmuStarter, GPUEvent, GPUFrameBuffer, Renderer};
+use super::{CDAccess, CDOperation, GUIEvent};
+use super::{EmuStarter, PS1Event, GPUFrameBuffer, Renderer};
 use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::mpsc;
 use std::thread;
@@ -18,29 +18,32 @@ const DEFAULT_SCALE: usize = 1;
 const FPS_PERIOD : f64 = 2.0;
 
 pub struct GPUPixelsRenderer {
-    event_proxy: EventLoopProxy<GPUEvent>,
+    event_proxy: EventLoopProxy<PS1Event>,
 }
 
 impl GPUPixelsRenderer {
-    pub fn new(event_proxy: EventLoopProxy<GPUEvent>) -> Self {
+    pub fn new(event_proxy: EventLoopProxy<PS1Event>) -> Self {
         Self { event_proxy }
     }
 }
 
 impl Renderer for GPUPixelsRenderer {
     fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8) {
-        let _ = self.event_proxy.send_event(GPUEvent::NewFrame(frame,last_performance));
+        let _ = self.event_proxy.send_event(PS1Event::NewFrame(frame, last_performance));
     }
     fn set_warp_mode(&mut self,enabled:bool) {
-        let _ = self.event_proxy.send_event(GPUEvent::WarpMode(enabled));
+        let _ = self.event_proxy.send_event(PS1Event::WarpMode(enabled));
     }
     fn set_paused(&mut self,paused:bool) {
-        let _ = self.event_proxy.send_event(GPUEvent::Paused(paused));
+        let _ = self.event_proxy.send_event(PS1Event::Paused(paused));
+    }
+    fn set_last_cd_access(&mut self, access: CDAccess) {
+        let _ = self.event_proxy.send_event(PS1Event::CDROMAccess(access));
     }
 }
 
 pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
-    let event_loop = EventLoop::<GPUEvent>::with_user_event()
+    let event_loop = EventLoop::<PS1Event>::with_user_event()
         .build()
         .unwrap();
 
@@ -71,6 +74,7 @@ struct PixelsRenderer {
     paused: bool,
     debug_mode: bool,
     last_performance: u8,
+    last_cd_access: Option<CDAccess>,
 }
 
 impl PixelsRenderer {
@@ -90,6 +94,7 @@ impl PixelsRenderer {
             paused: false,
             debug_mode: false,
             last_performance: 0,
+            last_cd_access: None,
         }
     }
 
@@ -99,6 +104,24 @@ impl PixelsRenderer {
         if duration >= FPS_PERIOD || update_now {
             let fps = self.fps_frames as f64 / duration;
             if let Some(window) = self.window {
+                let cd_info : String = match &self.last_cd_access {
+                    Some(access) => {
+                        match access.operation {
+                            CDOperation::Reading => {
+                                let pos = access.position.unwrap();
+                                format!("[CD R {:02}:{:02}:{:02}]",pos.m(),pos.s(),pos.f())
+                            },
+                            CDOperation::Playing => {
+                                let pos = access.position.unwrap();
+                                format!("[CD P {:02}:{:02}:{:02}]",pos.m(),pos.s(),pos.f())
+                            }
+                            CDOperation::Idle => {
+                                String::from("")
+                            }
+                        }
+                    }
+                    None => String::from("")
+                };
                 if self.warp_mode || self.paused || self.debug_mode {
                     let mut info = String::new();
                     if self.warp_mode {
@@ -110,10 +133,10 @@ impl PixelsRenderer {
                     if self.debug_mode {
                         info.push_str(" (debug mode)");
                     }
-                    window.set_title(&format!("PS1 Emulator - FPS: {:.2}{info} CPU: {:3}% [{}x{}]", fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("PS1 Emulator - FPS: {:.2}{info} CPU: {:3}% [{}x{}] {cd_info}", fps,self.last_performance,self.width,self.height));
                 }
                 else {
-                    window.set_title(&format!("PS1 Emulator - FPS: {:.2} CPU: {:3}% [{}x{}]", fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("PS1 Emulator - FPS: {:.2} CPU: {:3}% [{}x{}] {cd_info}", fps,self.last_performance,self.width,self.height));
                 }
             }
             self.fps_frames = 0;
@@ -155,7 +178,7 @@ impl PixelsRenderer {
     }
 }
 
-impl ApplicationHandler<GPUEvent> for PixelsRenderer {
+impl ApplicationHandler<PS1Event> for PixelsRenderer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
             .with_title("PS1 Emulator - ApplicationHandler Demo")
@@ -192,17 +215,20 @@ impl ApplicationHandler<GPUEvent> for PixelsRenderer {
         window_ref.request_redraw();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: GPUEvent) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: PS1Event) {
         match event {
-            GPUEvent::NewFrame(frame,last_performance) => {
+            PS1Event::NewFrame(frame, last_performance) => {
                 self.new_frame(&frame,last_performance);
             }
-            GPUEvent::WarpMode(on) => {
+            PS1Event::WarpMode(on) => {
                 self.warp_mode = on;
             }
-            GPUEvent::Paused(paused) => {
+            PS1Event::Paused(paused) => {
                 self.paused = paused;
                 self.update_fps(true);
+            }
+            PS1Event::CDROMAccess(access) => {
+                self.last_cd_access = Some(access);
             }
         }
     }

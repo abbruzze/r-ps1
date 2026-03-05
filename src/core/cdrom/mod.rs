@@ -142,7 +142,7 @@ enum CommandState {
 #[derive(Debug,Clone)]
 enum DriveState {
     Idle,
-    Playing,
+    Playing { sample_index:usize },
     Seeking,
     Reading { next_sector_cycles: usize },
 }
@@ -150,7 +150,7 @@ enum DriveState {
 impl DriveState {
     fn to_u8(&self) -> u8 {
         match self {
-            DriveState::Playing => 0x80,
+            DriveState::Playing{ .. } => 0x80,
             DriveState::Seeking => 0x40,
             DriveState::Reading{ .. } => 0x20,
             _ => 0x00,
@@ -456,9 +456,10 @@ impl CDRom {
             0 => {
                 // handling command
                 if !matches!(self.command_state, CommandState::Idle) {
-                    warn!("CDROM requesting new command while command state is not idle");
+                    warn!("CDROM requesting new command while command state is not idle. Command state: {:?}, drive state: {:?}",self.command_state,self.drive_state);
                 }
                 self.command_state = CommandState::Pending(value);
+                info!("CDROM pending command: {:02X}",value);
             },
             1 => self.write_data(value),
             2 => self.write_ci(value),

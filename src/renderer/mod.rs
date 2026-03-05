@@ -1,13 +1,15 @@
 pub mod pixels;
 
 use std::sync::{mpsc, Arc};
+use crate::core::cdrom::disc::DiscTime;
 use crate::core::controllers::ControllerButton;
 
 #[derive(Debug, Clone)]
-pub enum GPUEvent {
+pub enum PS1Event {
     NewFrame(GPUFrameBuffer,u8),
     WarpMode(bool),
     Paused(bool),
+    CDROMAccess(CDAccess),
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +18,18 @@ pub enum GUIEvent {
     WarpMode,
     Paused,
     VRAMDebugMode,
+}
+#[derive(Debug, Clone)]
+pub enum CDOperation {
+    Reading,
+    Playing,
+    Idle,
+}
+
+#[derive(Debug, Clone)]
+pub struct CDAccess {
+    operation: CDOperation,
+    position: Option<DiscTime>,
 }
 
 /*
@@ -45,4 +59,5 @@ pub trait Renderer {
     fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8);
     fn set_warp_mode(&mut self,enabled:bool);
     fn set_paused(&mut self,paused:bool);
+    fn set_last_cd_access(&mut self,access:CDAccess);
 }

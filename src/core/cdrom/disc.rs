@@ -334,6 +334,8 @@ impl Disc {
                 let duration = file_time; // suppose one track per file only
                 let track_end_time = track_start_time.add(&duration);
 
+                println!("Track #{} start={} end={} duration={} last_time={}",cue_track.number,track_start_time,track_end_time,duration,last_time);
+
                 let track = Track::new(file_id,cue_track.number,track_type,last_time.add(&track_start_time),last_time.add(&track_end_time));
                 last_time = last_time.add(&track.duration());
                 disc.tracks.push(track);
