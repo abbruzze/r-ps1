@@ -27,8 +27,7 @@ impl CDRom {
     }
 
     pub(super) fn check_drive_state(&mut self, irq_handler: &mut IrqHandler) {
-        let state = std::mem::replace(&mut self.drive_state, DriveState::Idle);
-        let new_state = match state {
+        let new_state = match self.drive_state.clone() {
             DriveState::Idle => DriveState::Idle,
             DriveState::Playing { sample_index } => {
                 self.play_sample(sample_index,irq_handler)
@@ -59,8 +58,7 @@ impl CDRom {
             CommandState::Response { cmd, irq, delay_cycles, response, next_state } => {
                 if delay_cycles == 1 {
                     // send INT
-                    info!("CDROM applying irq {:02X} with response {:?} for command {cmd:?}",irq,response);
-                    self.apply_irq_and_result(irq, response, irq_handler);
+                    self.apply_irq_and_result(cmd,irq, response, irq_handler);
                     *next_state
                 } else {
                     CommandState::Response { cmd, irq, delay_cycles: delay_cycles - 1, response, next_state }
@@ -105,7 +103,8 @@ impl CDRom {
         self.execute_command(cmd, true)
     }
 
-    pub(super) fn apply_irq_and_result(&mut self, irq: u8, response: Vec<u8>, irq_handler: &mut IrqHandler) {
+    pub(super) fn apply_irq_and_result(&mut self,cmd:Command, irq: u8, response: Vec<u8>, irq_handler: &mut IrqHandler) {
+        info!("CDROM applying irq {:02X} with response {:?} for command {cmd:?}",irq,response);
         self.set_irq(irq);
         self.check_irq(irq_handler);
         for b in response {
@@ -444,11 +443,12 @@ impl CDRom {
 
     fn keep_reading_sector(&mut self, irq_handler: &mut IrqHandler) -> DriveState {
         let send_int1 = self.read_data_sector();
+        let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
         if send_int1 {
             info!("CDROM reading sending INT1");
-            self.apply_irq_and_result(INT1, vec![self.get_stat(false, false, false)], irq_handler);
+            self.apply_irq_and_result(Command::Read,INT1, vec![self.get_stat(false, false, false)], irq_handler);
         }
-        let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
+
         info!("CDROM reading next sector in {} cycles",next_sector_cycles);
         DriveState::Reading { next_sector_cycles }
     }

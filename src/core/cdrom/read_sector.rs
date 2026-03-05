@@ -98,7 +98,7 @@ impl CDRom {
         }
         if send_report {
             info!("CDROM Sending play report: {:?}",report);
-            self.apply_irq_and_result(INT1,report.to_vec(),irq_handler);
+            self.apply_irq_and_result(Command::Play,INT1,report.to_vec(),irq_handler);
         }
     }
 }
