@@ -16,9 +16,9 @@ pub struct DiscTime {
 }
 
 impl DiscTime {
-    const ZERO_TIME : DiscTime = DiscTime { minutes: 0, seconds: 0, frames: 0 };
-    const FRAME_TIME : DiscTime = DiscTime { minutes: 0, seconds: 0, frames: 1 };
-    const _2_SEC_TIME : DiscTime = DiscTime { minutes: 0, seconds: 2, frames: 0 };
+    pub const ZERO_TIME : DiscTime = DiscTime { minutes: 0, seconds: 0, frames: 0 };
+    pub const FRAME_TIME : DiscTime = DiscTime { minutes: 0, seconds: 0, frames: 1 };
+    pub const _2_SEC_TIME : DiscTime = DiscTime { minutes: 0, seconds: 2, frames: 0 };
 
     pub fn new(minutes:u8,seconds:u8,frames:u8) -> Self {
         Self { minutes, seconds, frames }

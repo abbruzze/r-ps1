@@ -459,7 +459,7 @@ impl CDRom {
                     warn!("CDROM requesting new command while command state is not idle. Command state: {:?}, drive state: {:?}",self.command_state,self.drive_state);
                 }
                 self.command_state = CommandState::Pending(value);
-                info!("CDROM pending command: {:02X}",value);
+                info!("CDROM pending command: {:02X} while drive state={:?}",value,self.drive_state);
             },
             1 => self.write_data(value),
             2 => self.write_ci(value),
