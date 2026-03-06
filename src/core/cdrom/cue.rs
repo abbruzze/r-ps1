@@ -26,6 +26,7 @@ pub enum CueFileType {
 pub struct Track {
     pub number: u8,
     pub track_type: TrackType,
+    pub pregap: Option<Msf>,
     pub indices: Vec<Index>,
 }
 
@@ -110,8 +111,15 @@ pub fn parse_cue<P: AsRef<Path>>(path: P) -> std::io::Result<CueSheet> {
                 current_track = Some(Track {
                     number,
                     track_type,
+                    pregap: None,
                     indices: Vec::new(),
                 });
+            }
+
+            "PREGAP" => {
+                if let Some(track) = current_track.as_mut() {
+                    track.pregap = Some(parse_msf(&parts[1]));
+                }
             }
 
             "INDEX" => {

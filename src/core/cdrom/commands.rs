@@ -536,7 +536,7 @@ impl CDRom {
             self.activate_motor(false);
             if let Some(disc) = self.disc.as_mut() {
                 // move to start of track 1
-                let start_time = disc.get_tracks()[0].start_time().clone();
+                let start_time = disc.get_tracks()[0].effective_start_time().clone();
                 disc.seek_sector(start_time);
                 info!("CDROM stop completed. Seeked to track1 start time {:?} ",start_time);
             }
@@ -583,7 +583,7 @@ impl CDRom {
                 locp[0] = track.track_number();
                 locp[1] = 0x01;
                 let absolute_time = disc.get_head_position();
-                let track_relative_time = disc.get_head_position().sub(track.start_time()).add(&DiscTime::_2_SEC_TIME);
+                let track_relative_time = disc.get_head_position().sub(&track.effective_start_time());
                 locp[2] = absolute_time.m();
                 locp[3] = absolute_time.s();
                 locp[4] = absolute_time.f();

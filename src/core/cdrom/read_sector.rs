@@ -78,7 +78,7 @@ impl CDRom {
                     report[1] = track.track_number();
                     report[2] = 0x01;
 
-                    let time = if is_absolute_time { disc.get_head_position() } else { disc.get_head_position().sub(track.start_time()) };
+                    let time = if is_absolute_time { disc.get_head_position() } else { disc.get_head_position().sub(&track.effective_start_time()) };
                     report[3] = time.m();
                     report[4] = if is_absolute_time { time.s() } else { time.s() + 0x80 };
                     report[5] = time.f();
