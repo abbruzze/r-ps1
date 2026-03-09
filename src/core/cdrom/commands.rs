@@ -430,11 +430,7 @@ impl CDRom {
             self.change_drive_state(DriveState::Reading { next_sector_cycles });
             CommandState::Idle
         }
-        else if let Some(disc) = self.disc.as_mut() {
-            if let Some(loc) = self.pending_setloc.take() {
-                disc.seek_sector(loc);
-            }
-            info!("CDROM start reading from loc {:?} previous data in queue: {}",disc.get_head_position(),self.data_buffer.len());
+        else if self.is_disk_inserted() {
             self.activate_motor(true);
             //self.data_buffer.clear(); // maybe ?
             //self.make_stat_response(INT3, Command::Read)
@@ -452,6 +448,13 @@ impl CDRom {
     }
 
     fn keep_reading_sector(&mut self, irq_handler: &mut IrqHandler) -> DriveState {
+        if let Some(loc) = self.pending_setloc.take() {
+            if let Some(disc) = self.disc.as_mut() {
+                disc.seek_sector(loc);
+                info!("CDROM start reading from loc {:?} previous data in queue: {}",disc.get_head_position(),self.data_buffer.len());
+            }
+        }
+
         let send_int1 = self.read_data_sector();
         let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
         if send_int1 {
@@ -613,7 +616,7 @@ impl CDRom {
             let last_track_n = tracks[tracks.len() - 1].track_number();
             info!("CDROM get_tn first track {} last track {}",first_track_n,last_track_n);
             self.make_response(
-                Command::GetLocP,
+                Command::GetTN,
                 INT3,
                 FIRST_RESPONSE_IRQ_DELAY_44100,
                 &[BCD::encode(first_track_n), BCD::encode(last_track_n)],
@@ -630,7 +633,7 @@ impl CDRom {
             let track_n = BCD::decode(self.parameter_fifo.pop_front().unwrap());
             match disc.get_track_by_number(track_n) {
                 Some(track) => {
-                    let start_time = track.start_time();
+                    let start_time = track.effective_start_time();
                     info!("CDROM get_td track {}/{} start time {:?}",track_n,track.track_number(),start_time);
 
                     return self.make_response(
@@ -642,7 +645,9 @@ impl CDRom {
                         CommandState::Idle
                     )
                 }
-                None => {}
+                None => {
+                    error!("CDROM get_td track {} not found",track_n);
+                }
             }
         }
         self.make_error_response(Command::GetTD, 0x10, (false, false, true)) // Invalid sub-function

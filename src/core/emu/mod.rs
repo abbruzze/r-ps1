@@ -233,7 +233,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\doom\\Doom.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\residentevil\\Resident Evil (Europe).cue")).unwrap();
             //let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\Pawlov.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
