@@ -83,7 +83,9 @@ impl CDRom {
                     report[4] = if is_absolute_time { time.s() } else { time.s() + 0x80 };
                     report[5] = time.f();
                     // TODO peak values
+                    //info!("CDROM Sending play report: {:?} is_absolute={is_absolute_time} time={:?} track={:?}",report,time,track);
                 }
+
                 for e in report.iter_mut() {
                     *e = BCD::encode(*e);
                 }
@@ -97,7 +99,6 @@ impl CDRom {
             }
         }
         if send_report {
-            info!("CDROM Sending play report: {:?}",report);
             self.apply_irq_and_result(Command::Play,INT1,report.to_vec(),irq_handler);
         }
     }

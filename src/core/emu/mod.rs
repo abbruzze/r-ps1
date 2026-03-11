@@ -193,7 +193,7 @@ impl Emulator {
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = false;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\LIGHT.EXE");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\RenderTexturePolygon15BPP.exe");
         let exe_pre_files: Vec<(String,u32)> = vec![
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\SECOND.DAT"),0x80090000u32),
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
@@ -233,7 +233,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\residentevil\\Resident Evil (Europe).cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\castelvania\\Castlevania - Symphony of the Night (USA).cue")).unwrap();
             //let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\Pawlov.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }

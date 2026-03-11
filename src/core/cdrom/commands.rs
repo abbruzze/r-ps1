@@ -29,6 +29,9 @@ impl CDRom {
     pub(super) fn check_drive_state(&mut self, irq_handler: &mut IrqHandler) {
         let new_state = match self.drive_state.clone() {
             DriveState::Idle => DriveState::Idle,
+            DriveState::Playing { sample_index } if sample_index < 0 => {
+                DriveState::Playing { sample_index: sample_index + 1 }
+            }
             DriveState::Playing { sample_index } => {
                 self.play_sample(sample_index,irq_handler)
             },
@@ -46,13 +49,20 @@ impl CDRom {
 
     pub(super) fn check_command_state(&mut self, irq_handler: &mut IrqHandler) {
         let state = std::mem::replace(&mut self.command_state, CommandState::Idle);
-        self.busy_status = matches!(state,CommandState::Idle);
 
         let new_state = match state {
             CommandState::Idle => {
                 CommandState::Idle
             }
-            CommandState::Pending(cmd) => {
+            CommandState::WaitingIrqAck(cmd) => {
+                if self.is_irq_pending() {
+                    state
+                }
+                else {
+                    CommandState::ToProcess(cmd)
+                }
+            }
+            CommandState::ToProcess(cmd) => {
                 self.process_command(cmd)
             }
             CommandState::Response { cmd, irq, delay_cycles, response, next_state } => {
@@ -76,6 +86,9 @@ impl CDRom {
             }
         };
         self.command_state = new_state;
+        if matches!(self.command_state,CommandState::Response { irq:INT3, ..}) {
+            self.check_command_state(irq_handler);
+        }
     }
 
     fn process_command(&mut self, cmd: u8) -> CommandState {
@@ -86,7 +99,6 @@ impl CDRom {
                     error!("CDROM invalid parameters for command {:?}, found {} expected {:?}",command,self.parameter_fifo.len(),command.parameters_number());
                     self.make_bad_parameter_response(command)
                 } else {
-                    self.busy_status = true;
                     self.execute_command(command, false)
                 }
             }
@@ -228,21 +240,26 @@ impl CDRom {
     }
     // Play - Command 03h (,track) --> INT3(stat) --> optional INT1(report bytes)
     fn command_play(&mut self) -> CommandState {
-        if let Some(disc) = self.disc.as_mut() {
-            if let Some(loc) = self.pending_setloc.take() {
-                info!("CDROM play seeking {:?}",loc);
-                disc.seek_sector(loc);
-            }
+        self.activate_motor(true);
 
+        if let Some(disc) = self.disc.as_mut() {
             self.drive_state = DriveState::Playing { sample_index: 0 };
-            self.activate_motor(true);
-            let report_enabled = (self.mode & (1 << 2)) != 0;
-            if let Some(track) = self.parameter_fifo.pop_front() {
-                let track = BCD::decode(track);
-                info!("CDROM play track {} report enabled={report_enabled}",track);
-            } else {
-                info!("CDROM play with current track report enabled={report_enabled}");
+            let mut track = BCD::decode(self.parameter_fifo.pop_front().unwrap_or(0));
+            if track == 0 {
+                if let Some(loc) = self.pending_setloc.take() {
+                    info!("CDROM play seeking {:?}",loc);
+                    disc.seek_sector(loc);
+                }
             }
+            else {
+                let t = disc.get_track_by_number(track).unwrap();
+                track = t.track_number();
+                let start_time = t.effective_start_time();
+                disc.seek_sector(start_time);
+
+            }
+            info!("CDROM play track {track} at loc {:?}",disc.get_head_position());
+
             self.make_stat_response(INT3,Command::Play)
         }
         else {
@@ -586,7 +603,7 @@ impl CDRom {
                 locp[0] = track.track_number();
                 locp[1] = 0x01;
                 let absolute_time = disc.get_head_position();
-                let track_relative_time = disc.get_head_position().sub(&track.effective_start_time());
+                let track_relative_time = disc.get_head_position().sub(&track.start_time());
                 locp[2] = absolute_time.m();
                 locp[3] = absolute_time.s();
                 locp[4] = absolute_time.f();
@@ -630,7 +647,7 @@ impl CDRom {
     // GetTD - Command 14h,track --> INT3(stat,mm,ss) ;BCD
     fn command_get_td(&mut self) -> CommandState {
         if let Some(disc) = self.disc.as_ref() {
-            let track_n = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+            let mut track_n = BCD::decode(self.parameter_fifo.pop_front().unwrap());
             match disc.get_track_by_number(track_n) {
                 Some(track) => {
                     let start_time = track.effective_start_time();
@@ -655,15 +672,15 @@ impl CDRom {
 
     // =========================================
 
-    fn play_sample(&mut self,mut sample_index:usize,irq_handler:&mut IrqHandler) -> DriveState {
+    fn play_sample(&mut self,mut sample_index:isize,irq_handler:&mut IrqHandler) -> DriveState {
         if sample_index == 0 {
             self.read_audio_sector(irq_handler);
         }
-        let AudioLeftRight(left,right) = &self.last_audio_sector[sample_index];
+        let AudioLeftRight(left,right) = &self.last_audio_sector[sample_index as usize];
         self.audio_sample = AudioLeftRight(*left,*right);
 
         sample_index += 1;
-        if sample_index == self.last_audio_sector.len() {
+        if sample_index as usize == self.last_audio_sector.len() {
             sample_index = 0;
         }
 

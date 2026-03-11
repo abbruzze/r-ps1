@@ -134,7 +134,8 @@ impl Command {
 #[derive(Debug,Clone)]
 enum CommandState {
     Idle,
-    Pending(u8),
+    WaitingIrqAck(u8),
+    ToProcess(u8),
     Response { cmd: Command, irq: u8, delay_cycles: usize, response: Vec<u8>, next_state: Box<CommandState> },
     Delay { cmd: Command, delay_cycles: usize, next_state: Box<CommandState> },
     Response2 { cmd: Command },
@@ -142,7 +143,7 @@ enum CommandState {
 #[derive(Debug,Clone)]
 enum DriveState {
     Idle,
-    Playing { sample_index:usize },
+    Playing { sample_index:isize },
     Seeking,
     Reading { next_sector_cycles: usize },
 }
@@ -182,7 +183,6 @@ pub struct CDRom {
     audio_mute: bool,
     audio_sample: AudioLeftRight,
     command_state: CommandState,
-    busy_status: bool,
     shell_once_opened: bool,
     motor_on: bool,
     pending_setloc: Option<DiscTime>,
@@ -228,7 +228,6 @@ impl CDRom {
             audio_mute: false,
             audio_sample: AudioLeftRight(0,0),
             command_state: CommandState::Idle,
-            busy_status: false,
             shell_once_opened: false,
             motor_on: false,
             pending_setloc: None,
@@ -243,6 +242,7 @@ impl CDRom {
     }
 
     pub fn clock_44100hz(&mut self,irq_handler: &mut IrqHandler) {
+        self.audio_sample = AudioLeftRight(0,0);
         self.check_drive_state(irq_handler);
         self.check_command_state(irq_handler);
     }
@@ -355,8 +355,8 @@ impl CDRom {
         if !self.data_buffer.is_empty() {
             hsts |= 1 << 6;
         }
-        //hsts |= (self.drqsts as u8) << 6;
-        if self.busy_status {
+        let busy_status = matches!(self.command_state,CommandState::WaitingIrqAck(_) | CommandState::ToProcess(_));
+        if busy_status {
             hsts |= 1 << 7;
         }
         //info!("CDROM reading status: {:02X}",hsts);
@@ -458,7 +458,12 @@ impl CDRom {
                 if !matches!(self.command_state, CommandState::Idle) {
                     warn!("CDROM requesting new command while command state is not idle. Command state: {:?}, drive state: {:?}",self.command_state,self.drive_state);
                 }
-                self.command_state = CommandState::Pending(value);
+                self.command_state = if self.is_irq_pending() {
+                    CommandState::WaitingIrqAck(value)
+                }
+                else {
+                    CommandState::ToProcess(value)
+                };
                 info!("CDROM pending command: {:02X} while drive state={:?}",value,self.drive_state);
             },
             1 => self.write_data(value),
@@ -546,6 +551,10 @@ impl CDRom {
         if (self.hintmsk_reg & self.hintsts_reg) != 0 {
             irq_handler.set_irq(InterruptType::CDROM)
         }
+    }
+    #[inline]
+    fn is_irq_pending(&self) -> bool {
+        (self.hintsts_reg & 7) != 0
     }
 
     /*
