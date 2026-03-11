@@ -1,3 +1,4 @@
+use std::process::exit;
 use super::{Color, GP0Operation, Gp0State, SemiTransparency, TextureDepth, VRamCopyConfig, Vertex, GPU};
 use crate::core::clock::{Clock, EventType};
 use crate::core::interrupt::{InterruptType, IrqHandler};
@@ -130,15 +131,15 @@ impl GPU {
             Gp0State::VRamCopy(operation, config) => {
                 debug!("GPU GP0\tdata {:08X}",cmd);
                 operation(self, cmd,interrupt_handler);
-                match config.next() {
-                    Some(next) => {
-                        self.gp0state = Gp0State::VRamCopy(operation,next)
-                    }
-                    None => {
-                        debug!("Cpu->VRam operation terminated.");
-                        self.gp0state = Gp0State::WaitingCommand;
-                    }
-                }
+                // match config.next() {
+                //     Some(next) => {
+                //         self.gp0state = Gp0State::VRamCopy(operation,next)
+                //     }
+                //     None => {
+                //         debug!("Cpu->VRam operation terminated.");
+                //         self.gp0state = Gp0State::WaitingCommand;
+                //     }
+                // }
             }
             _ => unreachable!(),
         }
@@ -152,7 +153,7 @@ impl GPU {
             clock.schedule_gpu(EventType::GPUCommandCompleted, cycles as u64);
         }
     }
-    
+
     /*
     GP0(E1h) - Draw Mode setting (aka "Texpage")
       0-3   Texture page X Base   (N*64) (ie. in 64-halfword steps)    ;GPUSTAT.0-3
@@ -321,7 +322,7 @@ impl GPU {
             let old_pixel = self.get_pixel_15(offset);
             pixel_to_write = semi_transparency.unwrap().blend_rgb555(pixel_to_write,old_pixel);
         }
-        
+
         self.vram[offset] = pixel_to_write as u8;
         self.vram[offset + 1] = (pixel_to_write >> 8) as u8;
     }
@@ -499,15 +500,29 @@ impl GPU {
                 self.gp0state = Gp0State::WaitingCommandParameters(operation,Some(2));
             }
             Gp0State::WaitingCommandParameters(operation,Some(_)) => {
+                self.cpu_vram_copy_buffer.clear();
                 self.gp0state = self.extract_cpu_vram_copy_parameters::<true>(operation);
             },
             Gp0State::VRamCopy(_,config) => {
-                let vram_x = (config.coord_x.wrapping_add(config.counter_x)) & 0x3FF;
-                let vram_y = (config.coord_y.wrapping_add(config.counter_y)) & 0x1FF;
-                self.draw_pixel_offset(self.get_vram_offset_15(vram_x + 1, vram_y), (word >> 16) as u16, true, false,None);
-                debug!("Cpu->VRam ({vram_x},{vram_y}) = {:04X}",word >> 16);
-                self.draw_pixel_offset(self.get_vram_offset_15(vram_x, vram_y), word as u16, true, false,None);
-                debug!("Cpu->VRam ({},{vram_y}) = {:04X}",vram_x + 1,word as u16);
+                let total_hw = config.width as usize * config.height as usize;
+                for hw in [word as u16, (word >> 16) as u16] {
+                    self.cpu_vram_copy_buffer.push(hw);
+                    if self.cpu_vram_copy_buffer.len() == total_hw {
+                        let mut buffer_index = 0;
+                        for y in 0..config.height {
+                            let vram_y = config.coord_y + y;
+                            for x in 0..config.width {
+                                let vram_x = config.coord_x + x;
+                                let pixels = self.cpu_vram_copy_buffer[buffer_index];
+                                buffer_index += 1;
+                                self.draw_pixel_offset(self.get_vram_offset_15(vram_x, vram_y), pixels, true, false, None);
+                            }
+                        }
+                        self.cpu_vram_copy_buffer.clear();
+                        self.gp0state = Gp0State::WaitingCommand;
+                        return 0;
+                    }
+                }
             }
             _ => {}
         }

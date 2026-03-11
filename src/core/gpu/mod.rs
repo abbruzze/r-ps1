@@ -456,7 +456,7 @@ impl SemiTransparency {
             _ => unreachable!()
         }
     }
-    
+
     fn to_status(&self) -> u32 {
         match self {
             SemiTransparency::Average => 0b00,
@@ -597,7 +597,7 @@ struct VRamCopyConfig {
 
 impl VRamCopyConfig {
     fn next(&self) -> Option<VRamCopyConfig> {
-        let mut counter_x = self.counter_x.wrapping_add(2); // each step processes 2 halfword
+        let mut counter_x = self.counter_x.wrapping_add(1); // each step processes 2 halfword
         let mut counter_y = self.counter_y;
         let mut finished = false;
         if counter_x >= self.width {
@@ -725,6 +725,7 @@ pub struct GPU {
     gp0state: Gp0State,
     show_whole_vram: bool,
     last_cpu_perf: Perf,
+    cpu_vram_copy_buffer: Vec<u16>,
 }
 
 impl GPU {
@@ -751,6 +752,7 @@ impl GPU {
             gp0state: Gp0State::WaitingCommand,
             show_whole_vram: false,
             last_cpu_perf: Perf::new(Duration::from_millis(1000)),
+            cpu_vram_copy_buffer: Vec::new(),
         };
 
         gpu.display_config.horizontal_start = 0x260 + 0;
@@ -864,24 +866,26 @@ impl GPU {
 
     pub fn gpu_read_read(&mut self) -> u32 {
         match self.gp0state {
-            Gp0State::VRamCopy(operation,config) => {
-                let vram_x = config.coord_x + config.counter_x;
-                let vram_y = config.coord_y + config.counter_y;
-                self.gpu_read_register = self.get_pixel_15(self.get_vram_offset_15(vram_x, vram_y)) as u32 | (self.get_pixel_15(self.get_vram_offset_15(vram_x + 1, vram_y)) as u32) << 16;
-                debug!("VRam->Cpu ({vram_x},{vram_y}) = {:08X}",self.gpu_read_register);
-                match config.next() {
-                    Some(next) => {
-                        self.gp0state = Gp0State::VRamCopy(operation,next)
-                    }
-                    None => {
-                        if ((config.width * config.height) & 1) == 1 {
-                            self.gpu_read_register &= 0xFFFF; // remove upper halfword if width is odd
+            Gp0State::VRamCopy(operation,mut config) => {
+                let mut word_read = 0u32;
+                for i in 0..2 {
+                    let vram_x = config.coord_x + config.counter_x;
+                    let vram_y = config.coord_y + config.counter_y;
+                    word_read |= (self.get_pixel_15(self.get_vram_offset_15(vram_x, vram_y)) as u32) << (i * 16);
+                    match config.next() {
+                        Some(next) => {
+                            config = next;
+                            if i == 1 {
+                                self.gp0state = Gp0State::VRamCopy(operation,config);
+                            }
                         }
-                        debug!("VRam->Cpu operation terminated.");
-                        self.ready_bits.ready_to_send_vram_to_cpu = false;
-                        self.gp0state = Gp0State::WaitingCommand;
+                        None => {
+                            self.gp0state = Gp0State::WaitingCommand;
+                            break;
+                        }
                     }
                 }
+                self.gpu_read_register = word_read;
             },
             _ => {}
         }
