@@ -36,11 +36,17 @@ impl CDRom {
                 self.play_sample(sample_index,irq_handler)
             },
             DriveState::Seeking => DriveState::Seeking,
-            DriveState::Reading { next_sector_cycles: 1 } => {
-                self.keep_reading_sector(irq_handler)
-            }
             DriveState::Reading { next_sector_cycles } => {
-                DriveState::Reading { next_sector_cycles: next_sector_cycles - 1 }
+                // update adpcm sample
+                if let Some((sample_l, sample_r)) = self.adpcm.maybe_output_sample() {
+                    self.audio_sample = AudioLeftRight(sample_l, sample_r);
+                }
+                if next_sector_cycles == 1 {
+                    self.keep_reading_sector(irq_handler)
+                }
+                else {
+                    DriveState::Reading { next_sector_cycles: next_sector_cycles - 1 }
+                }
             }
         };
 
@@ -86,9 +92,9 @@ impl CDRom {
             }
         };
         self.command_state = new_state;
-        if matches!(self.command_state,CommandState::Response { irq:INT3, ..}) {
-            self.check_command_state(irq_handler);
-        }
+        // if matches!(self.command_state,CommandState::Response { irq:INT3, ..}) {
+        //     self.check_command_state(irq_handler);
+        // }
     }
 
     fn process_command(&mut self, cmd: u8) -> CommandState {

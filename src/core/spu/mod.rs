@@ -18,7 +18,7 @@ mod interpolate;
 mod util;
 mod envelope;
 mod noise;
-mod adpcm;
+pub mod adpcm;
 mod reverb;
 mod voice;
 

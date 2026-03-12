@@ -3,11 +3,13 @@ pub mod util;
 mod cue;
 mod commands;
 mod read_sector;
+mod xaadpcm;
 
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use tracing::{info, warn};
 use crate::core::cdrom::disc::{AudioLeftRight, Disc, DiscTime, TrackSectorDataSize};
+use crate::core::cdrom::xaadpcm::XaAdpcmState;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
@@ -159,13 +161,6 @@ impl DriveState {
     }
 }
 
-#[derive(Debug,Default)]
-struct ADPCM {
-    pub filter_enabled: bool,
-    pub file: u8,
-    pub channel: u8,
-}
-
 pub struct CDRom {
     drive_state: DriveState,
     disc: Option<Disc>,
@@ -187,7 +182,7 @@ pub struct CDRom {
     motor_on: bool,
     pending_setloc: Option<DiscTime>,
     mode: u8,
-    adpcm: ADPCM,
+    adpcm: XaAdpcmState,
 }
 
 impl DmaDevice for CDRom {
@@ -232,7 +227,7 @@ impl CDRom {
             motor_on: false,
             pending_setloc: None,
             mode: 0,
-            adpcm: ADPCM::default(),
+            adpcm: XaAdpcmState::new(),
         }
     }
 
@@ -597,6 +592,7 @@ impl CDRom {
      */
     fn write_adpctl(&mut self,value:u8) {
         info!("CDROM write adpctl {value:02X}");
+        self.adpcm.muted = (value & 0x01) != 0;
         if (value & 0x20) != 0 {
             self.cd_to_spu_volume = self.pending_cd_to_spu_volume;
         }

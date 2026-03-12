@@ -1,7 +1,7 @@
 mod memory_card;
 
-use tracing::{debug, info, warn};
 use crate::core::controllers::memory_card::MemoryCard;
+use tracing::{debug, info, warn};
 
 #[derive(Copy, Clone, Debug)]
 pub enum ControllerButton {
@@ -89,6 +89,7 @@ pub struct Controller {
     memory_card_sector: u16,
     last_cmd: u8,
     write_cheksum: u8,
+
 }
 
 impl Controller {
@@ -105,6 +106,7 @@ impl Controller {
             memory_card_sector: 0,
             last_cmd: 0,
             write_cheksum: 0,
+
         }
     }
 
@@ -344,7 +346,7 @@ impl Controller {
                     0x4E
                 }
             }
-            _ => unreachable!()
+            _ => unreachable!("Controller state: {:?}",self.state)
         };
 
         self.last_cmd = cmd;
@@ -355,9 +357,9 @@ impl Controller {
         if self.memory_card_selected {
             return self.read_mem_card_byte_after_command(cmd);
         }
-        //info!("controller read_byte {:?}",self.state);
+        debug!("controller[#{}] read_byte for {cmd:02X} with state {:?}",self.id,self.state);
 
-        match self.state {
+        let byte = match self.state {
             ControllerState::Init => {
                 if cmd == 0x01 && self.connected {
                     self.memory_card_selected = false;
@@ -370,11 +372,15 @@ impl Controller {
                 0xFF
             }
             ControllerState::IdLo => {
-                if cmd == 0x42 {
+                if (0x40..0x50).contains(&cmd) {
+                    if cmd != 0x42 {
+                        println!("Controller received a non 0x42 command: {cmd:02X}");
+                        self.state = ControllerState::Init;
+                    }
                     self.state = ControllerState::IdHi;
                 }
                 else {
-                    //warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
+                    warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
                     self.state = ControllerState::Init;
                 }
                 self.mode.id() as u8
@@ -442,6 +448,8 @@ impl Controller {
                 }
             }
             _ => unreachable!()
-        }
+        };
+
+        byte
     }
 }

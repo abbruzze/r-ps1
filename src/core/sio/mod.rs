@@ -9,6 +9,7 @@ use crate::core::interrupt::{InterruptType, IrqHandler};
 // 8 seems too low for pad.exe
 // 16 seems too high for resolution.exe
 const TX_RX_DATA_CYCLES : usize = 10 * CPU_CLOCK / 250_000; // 8 bit sent + 8 bit received at 250 kbps
+const ACK_TIMEOUT_CYCLES : u64 = 96;
 
 /*
 SIO_TX_DATA Notes
@@ -118,28 +119,54 @@ impl SIO0 {
     Note that some emulators do not implement all SIO0 interrupts, as the kernel's controller driver only ever uses the DSR (/ACK) interrupt.
      */
     pub fn write_ctrl(&mut self,value:u16) {
-        //debug!("SIO0 writing ctrl {:04X}",value);
+        let prev_dtr_on = self.ctrl & 0x02 != 0;
+
         self.ctrl = value & !0x50;
         if (value & 0x10) != 0 {
             self.irq = false;
             self.ctrl &= !0x10;
             self.ack_asserted = false;
         }
-        if (value & 0x02) != 0 { // DTR on -> CS
-            let selected_device = ((value >> 13) & 1) as u8;
-            self.selected_device = Some(selected_device);
+
+        let dtr_on = self.ctrl & 0x02 != 0;
+
+        let new_selected_device = if dtr_on {
+            let device = ((value >> 13) & 1) as u8;
+            if !prev_dtr_on { // /CS -> high -> low
+                debug!("New device #{device} selected and reset");
+                self.controllers[device as usize].reset();
+                Some(device)
+            }
+            else {
+                self.selected_device
+            }
         }
         else {
-            self.selected_device = None;
-        }
+            if let Some(device) = self.selected_device {
+                debug!("Device #{device} deselected");
+            }
+            None
+        };
+
+        self.selected_device = new_selected_device;
+
         if (value & 0x40) != 0 {
             self.irq = false;
             self.write_mode(0x0C);
-            self.rx_fifo.clear();
+            // self.rx_fifo.clear();
+            // self.tx_data.clear();
+            self.selected_device = None;
+            self.tx_idle = true;
+            // for controller in &mut self.controllers {
+            //     controller.reset();
+            // }
+            //self.ack_asserted = false;
+            debug!("SIO0 reset");
         }
 
-        debug!("SI0 selected device: {:?} ctrl={:02X}",self.selected_device,value);
+        debug!("SI0 write_ctrl selected device: {:?} ctrl={:02X}",self.selected_device,value);
     }
+
     pub fn read_ctrl(&self) -> u16 {
         self.ctrl
     }
@@ -173,20 +200,34 @@ impl SIO0 {
             3 => 64,
             _ => unreachable!()
         };
-        let cycles = (self.baud * factor) << 4;
+        let cycles = (self.baud * factor) << 4; // * 16 = 2 x 8 bit
 
-        // use fixed reasonable value: the above value works well with "pad" but not with "resolution"
         self.start_timer_timestamp = clock.current_time();
-        clock.schedule(EventType::SIO0,cycles as u64);
+        clock.schedule(EventType::SIO0Byte, cycles as u64);
     }
 
-    pub fn on_tx_transmitted(&mut self,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
+    pub fn on_event(&mut self,event:EventType,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
+        match event {
+            EventType::SIO0Byte => self.on_tx_transmitted(clock,interrupt_handler),
+            EventType::SIO0Ack => self.on_ack_timeout(),
+            _ => unreachable!()
+        }
+    }
+
+    fn on_ack_timeout(&mut self) {
+        self.ack_asserted = false;
+        debug!("SIO0 ack signal cleared");
+    }
+
+    fn on_tx_transmitted(&mut self,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
         // complete transfer
         let (tx_data,dev) = self.tx_data.pop_front().unwrap();
-        debug!("SIO0 Completing transfer sel={:?}",dev);
         let rx_data = self.controllers[dev as usize].read_byte_after_command(tx_data);
         debug!("SIO0 Transferred sel={:?} {:02X}, received {:02X}",dev,tx_data,rx_data);
         self.ack_asserted = self.controllers[dev as usize].ack();
+        if self.ack_asserted {
+            clock.schedule(EventType::SIO0Ack,ACK_TIMEOUT_CYCLES);
+        }
         if self.ack_asserted && (self.ctrl & (1 << 12)) != 0 { // DSR Interrupt Enable
             self.irq = true;
             interrupt_handler.set_irq(InterruptType::ControllerMemoryCard);
@@ -216,8 +257,8 @@ impl SIO0 {
      */
     pub fn read_rx_data<const SIZE: usize>(&mut self) -> u32 {
         const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32); }
-        debug!("Reading from RX FIFO len={}",self.rx_fifo.len());
-        match SIZE {
+        let fifo_len = self.rx_fifo.len();
+        let read = match SIZE {
             8 => self.rx_fifo.pop_front().unwrap_or(0x00) as u32,
             16 => {
                 let mut result = (self.rx_fifo.pop_front().unwrap_or(0x00) as u32) << 8;
@@ -233,8 +274,10 @@ impl SIO0 {
                 result
             }
             _ => unreachable!()
-        }
+        };
 
+        debug!("Reading[{SIZE}] from RX FIFO {read:02X} fifo_len={}",fifo_len);
+        read
     }
     pub fn peek_rx_data(&self) -> u8 {
         *self.rx_fifo.get(0).unwrap_or(&0x00)

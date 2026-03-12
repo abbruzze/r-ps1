@@ -11,7 +11,8 @@ pub enum EventType {
     Timer0,
     Timer1,
     Timer2,
-    SIO0,
+    SIO0Byte,
+    SIO0Ack,
     GPUCommandCompleted,
     Audio44100,
 }

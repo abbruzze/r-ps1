@@ -185,10 +185,10 @@ impl Emulator {
             debugger.execute();
         });
 
-        match self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\test.mcd")) {
-            Ok(_) => info!("Memory Card loaded"),
-            Err(e) => error!("Memory card error: {:?}",e),
-        }
+        // match self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\test.mcd")) {
+        //     Ok(_) => info!("Memory Card loaded"),
+        //     Err(e) => error!("Memory card error: {:?}",e),
+        // }
 
         let mut irq_handler = IrqHandler::new();
 
@@ -233,7 +233,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\castelvania\\Castlevania - Symphony of the Night (USA).cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\doom\\Doom.cue")).unwrap();
             //let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\Pawlov.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
@@ -314,9 +314,9 @@ impl Emulator {
                 let (timer2,clock) = self.bus.get_timer2_and_clock_mut();
                 timer2.on_timer_expired(clock,irq_handler);
             }
-            EventType::SIO0 => {
+            e@(EventType::SIO0Byte | EventType::SIO0Ack) => {
                 let (sio0,clock) = self.bus.get_sio0_and_clock_mut();
-                sio0.on_tx_transmitted(clock,irq_handler);
+                sio0.on_event(e,clock,irq_handler);
             }
             EventType::GPUCommandCompleted => {
                 self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
