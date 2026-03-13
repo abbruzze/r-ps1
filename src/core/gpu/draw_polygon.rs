@@ -1,6 +1,7 @@
 use std::cmp;
 use tracing::{debug, info, warn};
 use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
+use crate::core::gpu::gp0::DITHER_TABLE;
 use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::IrqHandler;
 
@@ -216,222 +217,11 @@ impl GPU {
         GPUTimings::triangle(pixels,is_gouraud,is_semi_transparent,is_textured)
     }
 
-    #[inline]
-    #[cfg(not(feature = "draw_polygon_bounding_box"))]
-    fn interpolate_fp(a: u32, b: u32, t: i32, dt: i32) -> i32 {
-        if dt == 0 {
-            a as i32
-        } else {
-            let v = (a << FP_BITS) as i64 + ((((b << FP_BITS) as i64 - (a << FP_BITS) as i64) * t as i64) / dt as i64);
-            v as i32
-        }
-    }
-    #[cfg(not(feature = "draw_polygon_bounding_box"))]
-    fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon, is_gouraud:bool, is_textured:bool, is_semi_transparent:bool, is_raw_texture:bool) {
-        let v0 = &polygon.vertex[0 + OFFSET];
-        let v1 = &polygon.vertex[1 + OFFSET];
-        let v2 = &polygon.vertex[2 + OFFSET];
-
-        let mut verts = [v0,v1,v2];
-        // sort by Y-coord
-        verts.sort_by_key(|v| v.0.y);
-
-        let (v0,c0,uv0) = verts[0];
-        let (v1,c1,uv1) = verts[1];
-        let (v2,c2,uv2) = verts[2];
-
-        // triangle with all vertexes equal
-        if v0.y == v2.y {
-            return;
-        }
-
-        // The GPU will not render any lines or polygons where the distance between any two vertices is
-        // larger than 1023 horizontally or 511 vertically
-        if v0.dx(v1) > 1023 || v0.dx(v2) > 1023 || v1.dx(v2) > 1023 ||
-            v0.dy(v1) > 512 || v0.dy(v2) > 512 || v1.dy(v2) > 512 {
-            return;
-        }
-
-        let mut draw_span = |y: i16, x0: i32, c0: &ColorFixed, uv0:UV, x1: i32, c1: &ColorFixed, uv1:UV,texture:&Option<PolygonTexture>| {
-            let mut xs = x0 >> FP_BITS;//(x0 + (1 << (FP_BITS - 1))) >> FP_BITS;
-            let mut xe = x1 >> FP_BITS;//(x1 + (1 << (FP_BITS - 1))) >> FP_BITS;
-
-            let mut uv_start = uv0;
-            let mut uv_end = uv1;
-
-            let mut c_start = c0;
-            let mut c_end   = c1;
-
-            if xs > xe {
-                std::mem::swap(&mut xs, &mut xe);
-                std::mem::swap(&mut c_start, &mut c_end);
-                std::mem::swap(&mut uv_start, &mut uv_end);
-            }
-
-            let dx = (xe - xs).max(1);
-
-            let dr_dx = (c_end.r - c_start.r) / dx;
-            let dg_dx = (c_end.g - c_start.g) / dx;
-            let db_dx = (c_end.b - c_start.b) / dx;
-
-            let mut r = c_start.r;
-            let mut g = c_start.g;
-            let mut b = c_start.b;
-
-            let du_dx = if is_textured { (uv_end.u - uv_start.u + (1 << (FP_BITS - 1))) / dx } else { 0 };
-            let dv_dx = if is_textured { (uv_end.v - uv_start.v + (1 << (FP_BITS - 1))) / dx } else { 0 };
-            let mut u = if is_textured { uv_start.u } else { 0 };
-            let mut v = if is_textured { uv_start.v } else { 0 };
-
-            /*
-            The PS1 GPU uses what is called the top-left rule.
-            If a pixel lies exactly on one of the triangle’s edges, only rasterize it if it’s on a top edge or a left edge.
-            If it’s on a right edge or a bottom edge, skip it.
-            This causes pixels lying on shared edges to only be rasterized once without needing to explicitly check if the edge is shared with another triangle.
-             */
-            for x in xs..xe {
-                let i = x - xs;
-                let mut color = if is_gouraud {
-                    Color::new((r >> FP_BITS) as u8,
-                               (g >> FP_BITS) as u8,
-                               (b >> FP_BITS) as u8,
-                               false)
-                }
-                else {
-                    c0.to_color()
-                };
-
-                let mut semi_transparency = self.semi_transparency;
-                let mut transparent_pixel = false;
-
-                if let Some(texture) = texture {
-                    semi_transparency = texture.semi_transparency;
-                    let ux = ((u >> FP_BITS) & 0xFF) as u32;
-                    let vx = ((v >> FP_BITS) & 0xFF) as u32;
-
-                    let texture_pixel = self.get_texture_pixel(texture.clut_x, texture.clut_y,ux,vx,texture.page_base_x,texture.page_base_y,texture.texture_depth);
-                    transparent_pixel = texture_pixel == 0x0000;
-                    if !transparent_pixel {
-                        let raw_color = Color::from_u16(texture_pixel);
-                        if is_raw_texture {
-                            color = raw_color;
-                        } else {
-                            color = raw_color.modulate_with(&color);
-                        };
-                    }
-
-                    u += du_dx;
-                    v += dv_dx;
-                }
-
-                r += dr_dx;
-                g += dg_dx;
-                b += db_dx;
-
-                // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
-                if !transparent_pixel {
-                    self.draw_pixel(&Vertex { x: xs as i16 + i as i16, y }, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
-                }
-            }
-
-        };
-
-        // upper half =============================================================================================
-        let dy01 = (v1.y - v0.y) as i32;
-        let dy02 = (v2.y - v0.y) as i32;
-
-        for y in v0.y..v1.y {
-            let t = (y - v0.y) as i32;
-            let x01 = Self::interpolate_fp(v0.x as u32, v1.x as u32, t, dy01);
-            let x02 = Self::interpolate_fp(v0.x as u32, v2.x as u32, t, dy02);
-
-            let (c01,c02) = if is_gouraud {
-                (ColorFixed {
-                    r: Self::interpolate_fp(c0.r as u32,c1.r as u32,t,dy01),
-                    g: Self::interpolate_fp(c0.g as u32,c1.g as u32, t, dy01),
-                    b: Self::interpolate_fp(c0.b as u32, c1.b as u32, t, dy01),
-                },
-                 ColorFixed {
-                     r: Self::interpolate_fp(c0.r as u32, c2.r as u32, t, dy02),
-                     g: Self::interpolate_fp(c0.g as u32, c2.g as u32, t, dy02),
-                     b: Self::interpolate_fp(c0.b as u32, c2.b as u32, t, dy02),
-                 }
-                )
-            }
-            else {
-                (ColorFixed::from_color(c0),ColorFixed::from_color(c0))
-            };
-
-            let (uv01,uv02) = if is_textured {
-                (UV {
-                    u: Self::interpolate_fp(uv0.u as u32, uv1.u as u32, t, dy01),
-                    v: Self::interpolate_fp(uv0.v as u32, uv1.v as u32, t, dy01),
-                },
-                 UV {
-                     u: Self::interpolate_fp(uv0.u as u32, uv2.u as u32, t, dy02),
-                     v: Self::interpolate_fp(uv0.v as u32, uv2.v as u32, t, dy02),
-                 }
-                )
-            }
-            else {
-                (*uv0,*uv0)
-            };
-
-            draw_span(y, x01, &c01,uv01, x02, &c02,uv02,&polygon.texture);
-        }
-        // lower half =============================================================================================
-        let dy12 = (v2.y - v1.y) as i32;
-
-        for y in v1.y..v2.y {
-            let t1 = (y - v1.y) as i32;
-            let t2 = (y - v0.y) as i32;
-
-            let x12 = Self::interpolate_fp(v1.x as u32, v2.x as u32, t1, dy12.max(1));
-            let x02 = Self::interpolate_fp(v0.x as u32, v2.x as u32, t2, dy02);
-
-            let (c12,c02) = if is_gouraud {
-                (ColorFixed {
-                    r: Self::interpolate_fp(c1.r as u32, c2.r as u32, t1, dy12),
-                    g: Self::interpolate_fp(c1.g as u32, c2.g as u32, t1, dy12),
-                    b: Self::interpolate_fp(c1.b as u32, c2.b as u32, t1, dy12),
-                },
-                 ColorFixed {
-                     r: Self::interpolate_fp(c0.r as u32, c2.r as u32, t2, dy02),
-                     g: Self::interpolate_fp(c0.g as u32, c2.g as u32, t2, dy02),
-                     b: Self::interpolate_fp(c0.b as u32, c2.b as u32, t2, dy02),
-                 }
-                )
-            }
-            else {
-                (ColorFixed::from_color(c0),ColorFixed::from_color(c0))
-            };
-
-            let (uv12,uv02) = if is_textured {
-                (UV {
-                    u: Self::interpolate_fp(uv1.u as u32, uv2.u as u32, t1, dy12),
-                    v: Self::interpolate_fp(uv1.v as u32, uv2.v as u32, t1, dy12),
-                },
-                 UV {
-                     u: Self::interpolate_fp(uv0.u as u32, uv2.u as u32, t2, dy02),
-                     v: Self::interpolate_fp(uv0.v as u32, uv2.v as u32, t2, dy02),
-                 }
-                )
-            }
-            else {
-                (*uv1,*uv0)
-            };
-
-            draw_span(y, x12, &c12, uv12, x02, &c02, uv02,&polygon.texture);
-        }
-    }
-
-    #[cfg(feature = "draw_polygon_bounding_box")]
     #[inline(always)]
     fn edge_function(a: &Vertex, b: &Vertex, c: &Vertex) -> i32 {
         (b.x as i32 - a.x as i32) * (c.y as i32 - a.y as i32) - (b.y as i32 - a.y as i32) * (c.x as i32 - a.x as i32)
     }
 
-    #[cfg(feature = "draw_polygon_bounding_box")]
     #[inline(always)]
     fn is_top_left(a: &Vertex, b: &Vertex) -> bool {
         let dy = b.y - a.y;
@@ -440,106 +230,133 @@ impl GPU {
         (dy < 0) || (dy == 0 && dx > 0)
     }
 
-    #[cfg(feature = "draw_polygon_bounding_box")]
-    fn draw_triangle<const OFFSET : usize>(&mut self, polygon:&Polygon,is_gouraud:bool,is_textured:bool,is_semi_transparent:bool,is_raw_texture:bool) -> usize {
-        let a = &polygon.vertex[0 + OFFSET];
-        let b = &polygon.vertex[1 + OFFSET];
-        let c = &polygon.vertex[2 + OFFSET];
+    fn draw_triangle<const OFFSET: usize>(&mut self, polygon: &Polygon, is_gouraud: bool, is_textured: bool, is_semi_transparent: bool, is_raw_texture: bool) -> usize {
+        let v0 = &polygon.vertex[0 + OFFSET];
+        let v1 = &polygon.vertex[1 + OFFSET];
+        let v2 = &polygon.vertex[2 + OFFSET];
 
-        let mut verts = [a,b,c];
+        let mut verts = [v0, v1, v2];
 
-        let abc = Self::edge_function(&a.0, &b.0, &c.0);
+        let mut abc = Self::edge_function(&v0.0, &v1.0, &v2.0);
         if abc < 0 {
-            verts.swap(0,1);
+            verts.swap(0, 1);
+            abc = -abc;
         }
 
-        let (a,ac,a_uv) = verts[0];
-        let (b,bc,b_uv) = verts[1];
-        let (c,cc,c_uv) = verts[2];
+        let (a, ac, a_uv) = verts[0];
+        let (b, bc, b_uv) = verts[1];
+        let (c, cc, c_uv) = verts[2];
 
-        let abc = abc.abs();
+        if abc == 0 {
+            return 0;
+        }
 
         let tl_ab = Self::is_top_left(a, b);
         let tl_bc = Self::is_top_left(b, c);
         let tl_ca = Self::is_top_left(c, a);
 
-        let min_x = cmp::min(a.x,cmp::min(b.x,c.x));
-        let max_x = cmp::max(a.x,cmp::max(b.x,c.x));
-        let min_y = cmp::min(a.y,cmp::min(b.y,c.y));
-        let max_y = cmp::max(a.y,cmp::max(b.y,c.y));
+        let bias_ab = if tl_ab { 0 } else { -1 };
+        let bias_bc = if tl_bc { 0 } else { -1 };
+        let bias_ca = if tl_ca { 0 } else { -1 };
 
-        // The GPU will not render any lines or polygons where the distance between any two vertices is
-        // larger than 1023 horizontally or 511 vertically
+        let min_x = cmp::max(0, cmp::min(a.x, cmp::min(b.x, c.x)));
+        let max_x = cmp::min(1024, cmp::max(a.x, cmp::max(b.x, c.x)));
+        let min_y = cmp::max(0, cmp::min(a.y, cmp::min(b.y, c.y)));
+        let max_y = cmp::min(512, cmp::max(a.y, cmp::max(b.y, c.y)));
+
+        if max_x <= min_x || max_y <= min_y {
+            return 0;
+        }
+
         if max_x - min_x > 1023 || max_y - min_y > 512 {
             return 0;
         }
 
-        let mut p = Vertex { x:0,y:0 };
-
         let mut pixels = 0;
+
+        // Use fixed point for weights. FP_BITS_W = 20 should be enough for 1024x1024 precision
+        const FP_BITS_W: usize = 20;
+        let inv_abc_fp = ((1u64 << FP_BITS_W) / abc as u64) as i32;
+
+        let (texture_page_x, texture_page_y, texture_depth, clut_x, clut_y, texture_semi_transparency) = if let Some(t) = &polygon.texture {
+            (t.page_base_x, t.page_base_y, t.texture_depth, t.clut_x, t.clut_y, t.semi_transparency)
+        } else {
+            (0, 0, TextureDepth::T4Bit, 0, 0, SemiTransparency::Average)
+        };
+
         for y in min_y..max_y {
-            p.y = y;
+            let p_y = Vertex { x: min_x, y };
+            let mut abp = Self::edge_function(a, b, &p_y);
+            let mut bcp = Self::edge_function(b, c, &p_y);
+            let mut cap = Self::edge_function(c, a, &p_y);
+
+            let dx_ab = a.y - b.y;
+            let dx_bc = b.y - c.y;
+            let dx_ca = c.y - a.y;
+
+            let vram_y_offset = self.get_vram_offset_15(0, y as u16);
+            let is_inside_y = y >= self.drawing_area.area_top as i16 && y <= self.drawing_area.area_bottom as i16;
+
             for x in min_x..max_x {
-                p.x = x;
+                let inside = (abp + bias_ab >= 0) && (bcp + bias_bc >= 0) && (cap + bias_ca >= 0);
 
-                let abp = Self::edge_function(a, b, &p);
-                if abp < 0 || (abp == 0 && !tl_ab) {
-                    continue;
-                }
-                let bcp = Self::edge_function(b, c, &p);
-                if bcp < 0 || (bcp == 0 && !tl_bc) {
-                    continue;
-                }
-                let cap = Self::edge_function(c, a, &p);
-                if cap < 0 || (cap == 0 && !tl_ca) {
-                    continue;
-                }
+                if inside && is_inside_y && x >= self.drawing_area.area_left as i16 && x <= self.drawing_area.area_right as i16 {
+                    let weight_a = if abc == 0 { 1.0 / 3.0 } else { bcp as f32 / abc as f32 };
+                    let weight_b = if abc == 0 { 1.0 / 3.0 } else { cap as f32 / abc as f32 };
+                    let weight_c = 1.0 - weight_a - weight_b;
 
-                let weight_a = if abc == 0 { 1.0 / 3.0 } else { bcp as f32 / abc as f32 };
-                let weight_b = if abc == 0 { 1.0 / 3.0 } else { cap as f32 / abc as f32 };
-                let weight_c = 1.0 - weight_a - weight_b;
+                    let mut color = if is_gouraud {
+                        let r = ac.r as f32 * weight_a + bc.r as f32 * weight_b + cc.r as f32 * weight_c;
+                        let g = ac.g as f32 * weight_a + bc.g as f32 * weight_b + cc.g as f32 * weight_c;
+                        let b = ac.b as f32 * weight_a + bc.b as f32 * weight_b + cc.b as f32 * weight_c;
+                        Color::new(r.round() as u8,g.round() as u8,b.round() as u8,false)
+                    }
+                    else {
+                        *ac
+                    };
 
-                let mut color = if is_gouraud {
-                    let r = ac.r as f32 * weight_a + bc.r as f32 * weight_b + cc.r as f32 * weight_c;
-                    let g = ac.g as f32 * weight_a + bc.g as f32 * weight_b + cc.g as f32 * weight_c;
-                    let b = ac.b as f32 * weight_a + bc.b as f32 * weight_b + cc.b as f32 * weight_c;
-                    Color::new(r.round() as u8,g.round() as u8,b.round() as u8,false)
-                }
-                else {
-                    *ac
-                };
+                    let mut semi_transparency_mode = self.semi_transparency;
+                    let mut transparent_pixel = false;
+                    let mut texture_semi_transparency_allowed = false;
 
-                let mut semi_transparency = self.semi_transparency;
-                let mut transparent_pixel = false;
-                let mut texture_semi_transparency_allowed = false;
+                    if is_textured {
+                        semi_transparency_mode = texture_semi_transparency;
+                        let u = ((a_uv.u as f32) + 0.5) * weight_a + ((b_uv.u as f32) + 0.5) * weight_b + ((c_uv.u as f32) + 0.5) * weight_c;
+                        let v = ((a_uv.v as f32) + 0.5) * weight_a + ((b_uv.v as f32) + 0.5) * weight_b + ((c_uv.v as f32) + 0.5) * weight_c;
 
-                if let Some(texture) = polygon.texture.as_ref() {
-                    semi_transparency = texture.semi_transparency;
-                    let u = ((a_uv.u as f32) + 0.5) * weight_a + ((b_uv.u as f32) + 0.5) * weight_b + ((c_uv.u as f32) + 0.5) * weight_c;
-                    let v = ((a_uv.v as f32) + 0.5) * weight_a + ((b_uv.v as f32) + 0.5) * weight_b + ((c_uv.v as f32) + 0.5) * weight_c;
+                        let texture_pixel = self.get_texture_pixel(clut_x, clut_y, u as u32, v as u32, texture_page_x, texture_page_y, texture_depth);
+                        transparent_pixel = texture_pixel == 0x0000;
+                        if !transparent_pixel {
+                            texture_semi_transparency_allowed = (texture_pixel & 0x8000) != 0;
+                            let raw_color = Color::from_u16(texture_pixel);
+                            if is_raw_texture {
+                                color = raw_color;
+                            } else {
+                                color = raw_color.modulate_with(&color);
+                            }
+                        }
+                    }
 
-                    let texture_pixel = self.get_texture_pixel(texture.clut_x, texture.clut_y,u as u32,v as u32,texture.page_base_x,texture.page_base_y,texture.texture_depth);
-                    transparent_pixel = texture_pixel == 0x0000;
                     if !transparent_pixel {
-                        texture_semi_transparency_allowed = (texture_pixel & 0x8000) != 0;
-                        let raw_color = Color::from_u16(texture_pixel);
-                        if is_raw_texture {
-                            color = raw_color;
+                        pixels += 1;
+                        let is_semi_transparent_pixel = is_semi_transparent && (!is_textured || texture_semi_transparency_allowed);
+
+                        let final_color = if (is_gouraud || (is_textured && !is_raw_texture)) && self.dithering {
+                            let dither_value = DITHER_TABLE[(y & 3) as usize][(x & 3) as usize];
+                            color.dither(dither_value)
                         } else {
-                            color = raw_color.modulate_with(&color);
+                            color
                         };
+
+                        let offset = vram_y_offset + ((x as usize & 0x3FF) << 1);
+                        self.draw_pixel_offset(offset, final_color.to_u16(), true, is_semi_transparent_pixel, Some(semi_transparency_mode));
                     }
                 }
-
-                // Dither enable (in Texpage command) affects ONLY polygons that do use gouraud shading or modulation.
-                if !transparent_pixel {
-                    pixels += 1;
-                    let is_semi_transparent = is_semi_transparent && (polygon.texture.is_none() || texture_semi_transparency_allowed);
-                    self.draw_pixel(&p, &color, is_semi_transparent,Some(semi_transparency), is_gouraud || (is_textured && !is_raw_texture));
-                }
+                abp += dx_ab as i32;
+                bcp += dx_bc as i32;
+                cap += dx_ca as i32;
             }
         }
-        
         pixels
     }
 }

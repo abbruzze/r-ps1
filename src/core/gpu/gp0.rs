@@ -1,11 +1,10 @@
-use std::process::exit;
 use super::{Color, GP0Operation, Gp0State, SemiTransparency, TextureDepth, VRamCopyConfig, Vertex, GPU};
 use crate::core::clock::{Clock, EventType};
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use tracing::{debug, error, info, warn};
 use crate::core::gpu::timings::GPUTimings;
 
-const DITHER_TABLE: &[[i8; 4]; 4] = &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
+pub(super) const DITHER_TABLE: &[[i8; 4]; 4] = &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
 
 /*
 • GPU GP0 COMMAND SUMMARY
@@ -289,7 +288,7 @@ impl GPU {
     Wrapping
     If the Source/Dest starting points plus the width/height value exceed the 1024x512 pixel VRAM size, then the Copy/Fill operations wrap to the opposite memory edge (without any carry-out from X to Y, nor from Y to X).
      */
-    #[inline]
+    #[inline(always)]
     pub(super) fn get_vram_offset_15(&self, x:u16, y:u16) -> usize {
         (((y & 0x1FF) as usize) << 11) + (((x & 0x3FF) as usize) << 1) // y * 2048 + x * 2
     }
@@ -301,11 +300,16 @@ impl GPU {
     pub(super) fn get_pixel_15(&self, offset:usize) -> u16 {
         self.vram[offset] as u16 | (self.vram[offset + 1] as u16) << 8
     }
-    #[inline]
+    #[inline(always)]
     pub(super) fn draw_pixel_offset(&mut self, offset:usize, pixel:u16, use_mask:bool, semi_transparent:bool,semi_transparency: Option<SemiTransparency>) {
         let mut pixel_to_write = pixel;
         if use_mask {
-            let old_pixel = self.get_pixel_15(offset);
+            let old_pixel = if self.preserve_masked_pixels || semi_transparent {
+                self.get_pixel_15(offset)
+            } else {
+                0
+            };
+
             if self.preserve_masked_pixels {
                 if (old_pixel & 0x8000) != 0 { // pixel is protected
                     return;
