@@ -743,7 +743,7 @@ impl Bus {
     // SIO handling
     fn sio_read(&mut self,address:u32,_size:usize) -> ReadMemoryAccess {
         info!("SIO read: {:08X}",address);
-        ReadMemoryAccess::Read(0,IO_REG_ACCESS_CYCLES)
+        ReadMemoryAccess::Read(0xFF,IO_REG_ACCESS_CYCLES)
     }
     fn sio_peek(&self,_address:u32) -> Option<u32> {
         // TODO
