@@ -27,35 +27,6 @@ struct Polygon {
     texture: Option<PolygonTexture>,
 }
 
-#[cfg(not(feature = "draw_polygon_bounding_box"))]
-#[derive(Debug,Clone,Default)]
-struct ColorFixed {
-    r: i32,
-    g: i32,
-    b: i32,
-}
-
-#[cfg(not(feature = "draw_polygon_bounding_box"))]
-impl ColorFixed {
-    fn from_color(color:&Color) -> ColorFixed {
-        ColorFixed {
-            r: (color.r as i32) << FP_BITS,
-            g: (color.g as i32) << FP_BITS,
-            b: (color.b as i32) << FP_BITS,
-        }
-    }
-
-    fn to_color(&self) -> Color {
-        Color::new((self.r >> FP_BITS) as u8,
-                   (self.g >> FP_BITS) as u8,
-                   (self.b >> FP_BITS) as u8,
-                   false)
-    }
-}
-
-#[cfg(not(feature = "draw_polygon_bounding_box"))]
-const FP_BITS: usize = 16;
-
 impl GPU {
     /*
     GPU Render Polygon Commands
@@ -273,10 +244,6 @@ impl GPU {
         }
 
         let mut pixels = 0;
-
-        // Use fixed point for weights. FP_BITS_W = 20 should be enough for 1024x1024 precision
-        const FP_BITS_W: usize = 20;
-        let inv_abc_fp = ((1u64 << FP_BITS_W) / abc as u64) as i32;
 
         let (texture_page_x, texture_page_y, texture_depth, clut_x, clut_y, texture_semi_transparency) = if let Some(t) = &polygon.texture {
             (t.page_base_x, t.page_base_y, t.texture_depth, t.clut_x, t.clut_y, t.semi_transparency)

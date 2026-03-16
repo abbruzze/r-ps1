@@ -111,7 +111,8 @@ impl GPU {
             }
             Gp0State::WaitingPolyline(operation,arg_size,v,c,shaded,semi_transparency) => {
                 debug!("GPU GP0 polyline parameter {:08X}",cmd);
-                if (cmd & 0xF000F000) == 0x50005000 { // polyline terminated
+                // The terminator value occurs on the first word of the vertex (i.e. the color word if it's a gouraud shaded).
+                if (cmd & 0xF000F000) == 0x50005000 && self.cmd_fifo.len() == 0 { // polyline terminated
                     self.gp0state = Gp0State::WaitingCommand;
                 }
                 else {
@@ -130,15 +131,6 @@ impl GPU {
             Gp0State::VRamCopy(operation, config) => {
                 debug!("GPU GP0\tdata {:08X}",cmd);
                 operation(self, cmd,interrupt_handler);
-                // match config.next() {
-                //     Some(next) => {
-                //         self.gp0state = Gp0State::VRamCopy(operation,next)
-                //     }
-                //     None => {
-                //         debug!("Cpu->VRam operation terminated.");
-                //         self.gp0state = Gp0State::WaitingCommand;
-                //     }
-                // }
             }
             _ => unreachable!(),
         }

@@ -67,17 +67,18 @@ impl GPU {
                 }
                 GPUTimings::line(pixels,is_gouraud,semi_transparent)
             }
-            Gp0State::WaitingPolyline(operation,_,start_vertex,start_color,is_gouraud,semi_transparent) => {
+            Gp0State::WaitingPolyline(operation,_,mut start_vertex,start_color,is_gouraud,semi_transparent) => {
                 let end_color = if is_gouraud {
                     Color::from_u32(self.cmd_fifo.pop().unwrap())
                 }
                 else {
                     start_color
                 };
+                start_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
                 let orig_end_vertex = Vertex::from_command_parameter(self.cmd_fifo.pop().unwrap());
                 let mut end_vertex = orig_end_vertex.clone();
                 end_vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
-                debug!("Drawing polyline v1={:?}/{:?} v2={:?}{:?} shaded={is_gouraud} semi_transparent={semi_transparent}",start_vertex,start_color,end_vertex,end_color);
+                debug!("Drawing polyline v1={:?} v2={:?} offset=({},{})shaded={is_gouraud} semi_transparent={semi_transparent}",start_vertex,end_vertex,self.drawing_area.x_offset,self.drawing_area.y_offset);
                 let pixels = self.draw_line(&start_vertex,&end_vertex,&start_color,&end_color,is_gouraud,semi_transparent);
                 let arg_size : usize = if is_gouraud {2} else {1};
                 self.gp0state = Gp0State::WaitingPolyline(operation,arg_size,orig_end_vertex,end_color,is_gouraud,semi_transparent);
