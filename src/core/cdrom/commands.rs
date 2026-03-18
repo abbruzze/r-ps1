@@ -150,6 +150,8 @@ impl CDRom {
             Command::GetTN => self.command_get_tn(),
             Command::GetTD => self.command_get_td(),
             Command::Play => self.command_play(),
+            Command::MotorOn => self.command_motor_on(second_response),
+            Command::Mute => self.command_mute(),
             _ => todo!("Command {:?} not implemented", cmd),
         }
     }
@@ -674,6 +676,43 @@ impl CDRom {
             }
         }
         self.make_error_response(Command::GetTD, 0x10, (false, false, true)) // Invalid sub-function
+    }
+    // MotorOn - Command 07h --> INT3(stat) --> INT2(stat)
+    // Activates the drive motor, works ONLY if the motor was off (otherwise fails with INT5(stat,20h);
+    // that error code would normally indicate "wrong number of parameters", but means "motor already on" in this case).
+    fn command_motor_on(&mut self,second_response:bool) -> CommandState {
+        if second_response {
+            info!("CDROM motor_on completed");
+            self.make_stat_response(INT2, Command::MotorOn)
+        }
+        else {
+            if self.motor_on {
+                self.make_bad_parameter_response(Command::MotorOn)
+            }
+            else {
+                self.motor_on = true;
+                self.make_response(
+                    Command::MotorOn,
+                    INT3,
+                    FIRST_RESPONSE_IRQ_DELAY_44100,
+                    STAT_NO_DATA,
+                    STAT_NO_ERR,
+                    CommandState::Delay {
+                        cmd: Command::MotorOn,
+                        delay_cycles: STD_SECOND_RESPONSE_IRQ_DELAY_44100,
+                        next_state: Box::new(
+                            CommandState::Response2 { cmd: Command::MotorOn }
+                        )
+                    }
+                )
+            }
+        }
+    }
+    // Mute - Command 0Bh --> INT3(stat)
+    fn command_mute(&mut self) -> CommandState {
+        info!("CDROM mute on");
+        self.audio_mute = true;
+        self.make_stat_response(INT3, Command::MotorOn)
     }
 
     // =========================================

@@ -18,7 +18,7 @@ impl CDRom {
                         (!self.adpcm.filter_enabled || sector.matches_file_and_channel(self.adpcm.file,self.adpcm.channel)) {
                         // Audio ADPCM
                         self.adpcm.decode_sector(&sector.sector);
-                        //info!("CDROM Audio ADPCM sector at {:?}, discarding for now ...",disc.get_head_position());
+                        info!("CDROM Audio ADPCM sector at {:?},decoding ...",disc.get_head_position());
                     }
                     else if self.adpcm.filter_enabled && sector.is_audio_adpcm() {
                         // The controller does not send sectors to the data FIFO if ADPCM filtering is enabled
@@ -76,7 +76,7 @@ impl CDRom {
                 if let Some(track) = disc.get_current_track() {
                     report[0] = stat;
                     report[1] = track.track_number();
-                    report[2] = 0x01;
+                    report[2] = (disc.get_head_position() >= track.effective_start_time()) as u8;
 
                     let time = if is_absolute_time { disc.get_head_position() } else { disc.get_head_position().sub(&track.effective_start_time()) };
                     report[3] = time.m();

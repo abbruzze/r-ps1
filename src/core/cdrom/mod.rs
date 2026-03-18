@@ -76,9 +76,11 @@ enum Command {
     Setloc,
     Play,
     Read,
+    MotorOn,
     Stop,
     Pause,
     Init,
+    Mute,
     Demute,
     SetMode,
     SetFilter,
@@ -100,9 +102,11 @@ impl Command {
             0x02 => Some(Command::Setloc),
             0x03 => Some(Command::Play),
             0x06|0x1B => Some(Command::Read),
+            0x07 => Some(Command::MotorOn),
             0x08 => Some(Command::Stop),
             0x09 => Some(Command::Pause),
             0x0A => Some(Command::Init),
+            0x0B => Some(Command::Mute),
             0x0C => Some(Command::Demute),
             0x0D => Some(Command::SetFilter),
             0x0E => Some(Command::SetMode),
@@ -200,7 +204,7 @@ impl DmaDevice for CDRom {
         self.read_2::<32>()
     }
     fn dma_cycles_per_word(&self) -> usize {
-        24
+        1
     }
 }
 
