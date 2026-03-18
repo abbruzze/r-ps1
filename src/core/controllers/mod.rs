@@ -373,10 +373,11 @@ impl Controller {
             }
             ControllerState::IdLo => {
                 if (0x40..0x50).contains(&cmd) {
-                    if cmd != 0x42 {
-                        println!("Controller received a non 0x42 command: {cmd:02X}");
-                        self.state = ControllerState::Init;
-                    }
+                    self.last_cmd = cmd;
+                    // if cmd != 0x42 {
+                    //     println!("Controller received a non 0x42 command: {cmd:02X}");
+                    //     self.state = ControllerState::Init;
+                    // }
                     self.state = ControllerState::IdHi;
                 }
                 else {
@@ -386,7 +387,12 @@ impl Controller {
                 self.mode.id() as u8
             }
             ControllerState::IdHi => {
-                self.state = ControllerState::SwLo;
+                if self.last_cmd == 0x42 {
+                    self.state = ControllerState::SwLo;
+                }
+                else {
+                    self.state = ControllerState::Init;
+                }
                 (self.mode.id() >> 8) as u8
             }
             ControllerState::SwLo => {
