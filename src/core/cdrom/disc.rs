@@ -1,13 +1,14 @@
 use std::cmp::Ordering;
 use std::{fmt, fs};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::exit;
 use tracing::{error, info, warn};
-use crate::core::cdrom::{cue, util, Region};
+use crate::core::cdrom::{cue, Region};
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
+
+const FILE_BUFFER_SIZE : usize = 1024 * 1024;
 
 #[derive(Copy,Clone,Debug)]
 pub struct DiscTime {
@@ -246,7 +247,7 @@ impl Track {
         Self { file_id, number, track_type, start_time, end_time, pre_gap, post_gap, pause_gap }
     }
 
-    fn read_sector_into(&mut self,file:&mut File, msf:DiscTime, buffer: &mut [u8]) -> std::io::Result<bool> {
+    fn read_sector_into(&mut self,file:&mut BufReader<File>, msf:DiscTime, buffer: &mut [u8]) -> std::io::Result<bool> {
         let relative_msf = msf.sub(&self.start_time);
         if relative_msf < self.pre_gap || relative_msf > self.end_time.sub(&self.start_time).sub(&self.post_gap) {
             self.fill_fake_sector(msf, buffer);
@@ -277,7 +278,7 @@ impl Track {
 pub struct Disc {
     cue_file_name:String,
     tracks:Vec<Track>,
-    files:Vec<(File,PathBuf)>,
+    files:Vec<(BufReader<File>,PathBuf)>,
     region: Option<Region>,
     head_position: DiscTime,
     track_number: u8,
@@ -310,13 +311,15 @@ impl Disc {
             if !bin_path.exists() {
                 return Err(format!("File '{:?}' referenced in cue sheet '{}' does not exist",file.path,cue_file_name));
             }
-            match File::open(bin_path.clone()) {
-                Ok(file) => disc.files.push((file,bin_path.clone())),
-                Err(e) => return Err(format!("Failed to open file '{}': {}",bin_path.display(),e))
-            }
-
-            let file_metadata = fs::metadata(&bin_path).unwrap();
-            let file_len_bytes = file_metadata.len();
+            let file_bytes = match File::open(bin_path.clone()) {
+                Ok(file) => {
+                    let file_len = file.metadata().unwrap().len() as u32;
+                    disc.files.push((BufReader::with_capacity(FILE_BUFFER_SIZE,file),bin_path.clone()));
+                    file_len
+                },
+                Err(e) =>
+                    return Err(format!("Failed to open file '{}': {}",bin_path.display(),e))
+            };
 
             for i in 0..file.tracks.len() {
                 let track = &file.tracks[i];
@@ -342,7 +345,7 @@ impl Disc {
                 });
                 let is_last_track_in_file = i == file.tracks.len() - 1;
                 let data_end_time = if is_last_track_in_file {
-                    DiscTime::from_file_length(file_len_bytes as u32)
+                    DiscTime::from_file_length(file_bytes)
                 }
                 else {
                     let next_track = &file.tracks[i + 1];
@@ -379,7 +382,7 @@ impl Disc {
         Ok(disc)
     }
 
-    fn find_track(&mut self,msf:DiscTime) -> Option<(&mut Track,&mut File,PathBuf)> {
+    fn find_track(&mut self,msf:DiscTime) -> Option<(&mut Track,&mut BufReader<File>,PathBuf)> {
         let track_index = match self.tracks_start_times.binary_search(&msf) {
             Ok(i) => {
                 Some(i)
