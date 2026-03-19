@@ -268,8 +268,8 @@ impl GPU {
                 let inside = (abp + bias_ab >= 0) && (bcp + bias_bc >= 0) && (cap + bias_ca >= 0);
 
                 if inside && is_inside_y && x >= self.drawing_area.area_left as i16 && x <= self.drawing_area.area_right as i16 {
-                    let weight_a = if abc == 0 { 1.0 / 3.0 } else { bcp as f32 / abc as f32 };
-                    let weight_b = if abc == 0 { 1.0 / 3.0 } else { cap as f32 / abc as f32 };
+                    let weight_a = bcp as f32 / abc as f32;
+                    let weight_b = cap as f32 / abc as f32;
                     let weight_c = 1.0 - weight_a - weight_b;
 
                     let mut color = if is_gouraud {
