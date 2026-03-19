@@ -203,7 +203,7 @@ impl SIO0 {
         let cycles = (self.baud * factor) << 4; // * 16 = 2 x 8 bit
 
         self.start_timer_timestamp = clock.current_time();
-        clock.schedule(EventType::SIO0Byte, cycles as u64);
+        clock.schedule(EventType::SIO0Byte, TX_RX_DATA_CYCLES as u64);
     }
 
     pub fn on_event(&mut self,event:EventType,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
