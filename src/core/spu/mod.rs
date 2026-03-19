@@ -268,7 +268,7 @@ impl DmaDevice for Spu {
     }
 
     fn dma_cycles_per_word(&self) -> usize {
-        4
+        1
     }
 }
 

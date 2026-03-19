@@ -1,4 +1,4 @@
-use super::{CDAccess, CDOperation, GUIEvent};
+use super::{CDOperation, GUIEvent};
 use super::{EmuStarter, PS1Event, GPUFrameBuffer, Renderer};
 use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::mpsc;
@@ -37,7 +37,7 @@ impl Renderer for GPUPixelsRenderer {
     fn set_paused(&mut self,paused:bool) {
         let _ = self.event_proxy.send_event(PS1Event::Paused(paused));
     }
-    fn set_last_cd_access(&mut self, access: CDAccess) {
+    fn set_last_cd_access(&mut self, access: CDOperation) {
         let _ = self.event_proxy.send_event(PS1Event::CDROMAccess(access));
     }
 }
@@ -74,7 +74,7 @@ struct PixelsRenderer {
     paused: bool,
     debug_mode: bool,
     last_performance: u8,
-    last_cd_access: Option<CDAccess>,
+    last_cd_access: Option<CDOperation>,
 }
 
 impl PixelsRenderer {
@@ -106,14 +106,12 @@ impl PixelsRenderer {
             if let Some(window) = self.window {
                 let cd_info : String = match &self.last_cd_access {
                     Some(access) => {
-                        match access.operation {
-                            CDOperation::Reading => {
-                                let pos = access.position.unwrap();
-                                format!("[CD R {:02}:{:02}:{:02}]",pos.m(),pos.s(),pos.f())
+                        match access {
+                            CDOperation::Reading(time) => {
+                                format!("[CD R {:02}:{:02}:{:02}]",time.m(),time.s(),time.f())
                             },
-                            CDOperation::Playing => {
-                                let pos = access.position.unwrap();
-                                format!("[CD P {:02}:{:02}:{:02}]",pos.m(),pos.s(),pos.f())
+                            CDOperation::Playing(time) => {
+                                format!("[CD P {:02}:{:02}:{:02}]",time.m(),time.s(),time.f())
                             }
                             CDOperation::Idle => {
                                 String::from("")

@@ -1,5 +1,5 @@
 use crate::audio::{AudioDevice, AudioSample};
-use crate::core::cdrom::CDRom;
+use crate::core::cdrom::{CDOperation, CDRom};
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
 use crate::core::cpu::{disassembler, Cpu};
@@ -27,8 +27,6 @@ use thread::spawn;
 use tracing::{error, info};
 use crate::audio::cpal::CpalAudioDevice;
 
-const THROTTLE_RES : u64 = 10;
-const THROTTLE_ADJ_FACTOR : f32 = 1.85;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
@@ -82,7 +80,6 @@ pub struct Emulator {
     gpu: Rc<RefCell<GPU>>,
     cdrom: Rc<RefCell<CDRom>>,
     dma: Rc<RefCell<DMAController>>,
-    mdec: Rc<RefCell<MDec>>,
     spu: Rc<RefCell<Spu>>,
     audio_device: Option<Box<dyn AudioDevice>>,
     just_entered_in_step_mode: bool,
@@ -94,9 +91,9 @@ pub struct Emulator {
     warp_mode_enabled: bool,
     paused: bool,
     debug_vram_mode: bool,
-    last_throttle_timestamp: Instant,
     dma_in_progress:bool,
     perf: Perf,
+    last_cd_op: CDOperation,
 }
 
 impl Emulator {
@@ -131,7 +128,6 @@ impl Emulator {
             gpu,
             cdrom,
             dma,
-            mdec,
             spu,
             audio_device: None,
             just_entered_in_step_mode: false,
@@ -143,9 +139,9 @@ impl Emulator {
             warp_mode_enabled: false,
             paused: false,
             debug_vram_mode: false,
-            last_throttle_timestamp: Instant::now(),
             dma_in_progress: false,
             perf: Perf::new(Duration::from_millis(1000)),
+            last_cd_op: CDOperation::Idle,
         };
 
         emu
@@ -233,7 +229,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\doom\\Doom.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\descent\\Descent (USA).cue")).unwrap();
             //let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\Pawlov.cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
@@ -300,6 +296,7 @@ impl Emulator {
 
                 if self.new_frame {
                     self.check_input();
+                    self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(self.last_cd_op.clone());
                 }
             }
             EventType::Timer0 => {
@@ -323,7 +320,7 @@ impl Emulator {
             }
             EventType::Audio44100 => {
                 let mut cdrom = self.cdrom.borrow_mut();
-                cdrom.clock_44100hz(irq_handler);
+                self.last_cd_op = cdrom.clock_44100hz(irq_handler);
                 let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&cdrom,irq_handler));
                 if let Some(audio_device) = self.audio_device.as_mut() {
                     if !self.warp_mode_enabled {
