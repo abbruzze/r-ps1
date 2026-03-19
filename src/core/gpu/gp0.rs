@@ -338,7 +338,7 @@ impl GPU {
     }
 
 
-
+    #[inline(always)]
     pub(super) fn get_texture_pixel(&self, clut_x: u32, clut_y: u32, u: u32, v: u32, texture_page_x:u8, texture_page_y: u8, texture_depth:TextureDepth) -> u16 {
         /*
         GP0(E2h) - Texture Window setting
