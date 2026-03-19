@@ -29,11 +29,11 @@ impl CDRom {
     pub(super) fn check_drive_state(&mut self, irq_handler: &mut IrqHandler) {
         let new_state = match self.drive_state.clone() {
             DriveState::Idle => DriveState::Idle,
-            DriveState::Playing { sample_index } if sample_index < 0 => {
-                DriveState::Playing { sample_index: sample_index + 1 }
+            DriveState::Playing { sample_index, report_counter, report_absolute } if sample_index < 0 => {
+                DriveState::Playing { sample_index: sample_index + 1, report_counter, report_absolute }
             }
-            DriveState::Playing { sample_index } => {
-                self.play_sample(sample_index,irq_handler)
+            DriveState::Playing { sample_index, report_counter, report_absolute } => {
+                self.play_sample(sample_index,report_counter,report_absolute,irq_handler)
             },
             DriveState::Seeking => DriveState::Seeking,
             DriveState::Reading { next_sector_cycles } => {
@@ -251,7 +251,7 @@ impl CDRom {
         self.activate_motor(true);
 
         if let Some(disc) = self.disc.as_mut() {
-            self.drive_state = DriveState::Playing { sample_index: 0 };
+            self.drive_state = DriveState::Playing { sample_index: 0, report_counter: 1, report_absolute: true };
             let mut track = BCD::decode(self.parameter_fifo.pop_front().unwrap_or(0));
             if track == 0 {
                 if let Some(loc) = self.pending_setloc.take() {
@@ -717,9 +717,16 @@ impl CDRom {
 
     // =========================================
 
-    fn play_sample(&mut self,mut sample_index:isize,irq_handler:&mut IrqHandler) -> DriveState {
+    fn play_sample(&mut self,mut sample_index:isize,mut report_counter:usize, mut report_absolute: bool,irq_handler:&mut IrqHandler) -> DriveState {
         if sample_index == 0 {
-            self.read_audio_sector(irq_handler);
+            self.read_audio_sector(report_counter == 1,report_absolute,irq_handler);
+            if report_counter == 1 {
+                report_counter = 16;
+                report_absolute ^= true;
+            }
+            else {
+                report_counter -= 1;
+            }
         }
         let AudioLeftRight(left,right) = &self.last_audio_sector[sample_index as usize];
         self.audio_sample = AudioLeftRight(*left,*right);
@@ -729,6 +736,6 @@ impl CDRom {
             sample_index = 0;
         }
 
-        DriveState::Playing { sample_index }
+        DriveState::Playing { sample_index, report_counter, report_absolute }
     }
 }

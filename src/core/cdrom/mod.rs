@@ -149,7 +149,7 @@ enum CommandState {
 #[derive(Debug,Clone)]
 enum DriveState {
     Idle,
-    Playing { sample_index:isize },
+    Playing { sample_index:isize, report_counter:usize, report_absolute: bool },
     Seeking,
     Reading { next_sector_cycles: usize },
 }
@@ -163,6 +163,13 @@ impl DriveState {
             _ => 0x00,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum CDOperation {
+    Reading(DiscTime),
+    Playing(DiscTime),
+    Idle,
 }
 
 pub struct CDRom {
@@ -240,10 +247,34 @@ impl CDRom {
         info!("CDROM inserted disk '{}'",self.disc.as_ref().unwrap().get_cue_file_name());
     }
 
-    pub fn clock_44100hz(&mut self,irq_handler: &mut IrqHandler) {
+    pub fn clock_44100hz(&mut self,irq_handler: &mut IrqHandler) -> CDOperation {
         self.audio_sample = AudioLeftRight(0,0);
         self.check_drive_state(irq_handler);
         self.check_command_state(irq_handler);
+        
+        match self.drive_state {
+            DriveState::Reading { .. } => {
+                let time = if let Some(disc) = &self.disc {
+                    disc.get_head_position()
+                }
+                else {
+                    DiscTime::ZERO_TIME
+                };
+                CDOperation::Reading(time)
+            }
+            DriveState::Playing { .. } => {
+                let time = if let Some(disc) = &self.disc {
+                    disc.get_head_position()
+                }
+                else {
+                    DiscTime::ZERO_TIME
+                };
+                CDOperation::Playing(time)
+            }
+            _ => {
+                CDOperation::Idle
+            }
+        } 
     }
 
     pub fn spu_volume_matrix(&self) -> [[u8; 2]; 2] {
@@ -408,7 +439,7 @@ impl CDRom {
             _ => unreachable!()
         };
 
-        //info!("CDROM read_2 read {:08X} from buffer [remain bytes={}]",read,self.read_buffer.len());
+        //info!("CDROM read_2 read {:08X} from buffer [remain bytes={}]",read,self.data_buffer.len());
 
         read
     }

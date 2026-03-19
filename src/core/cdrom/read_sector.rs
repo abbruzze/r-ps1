@@ -47,7 +47,7 @@ impl CDRom {
         send_int1
     }
 
-    pub(super) fn read_audio_sector(&mut self,irq_handler:&mut IrqHandler) {
+    pub(super) fn read_audio_sector(&mut self,send_report_flag:bool,report_absolute:bool,irq_handler:&mut IrqHandler) {
         let stat = self.get_stat(false,false,false);
         let mut report = [0u8; 8];
         let mut send_report = false;
@@ -68,22 +68,20 @@ impl CDRom {
             // amm/ass/asect are returned on asect=00h,20h,40h,60h   ;-absolute time
             // mm/ss+80h/sect are returned on asect=10h,30h,50h,70h  ;-within current track
             // (or, in case of read errors, report may be returned on other asect's)
-            let sect = disc.get_head_position().f();
-            if (self.mode & 0x04) != 0 && (sect & 0xF) == 0 {
+            if send_report_flag && (self.mode & 0x04) != 0 {
                 send_report = true;
-                let is_absolute_time = ((sect >> 4) & 1) == 0;
 
                 if let Some(track) = disc.get_current_track() {
                     report[0] = stat;
                     report[1] = track.track_number();
                     report[2] = (disc.get_head_position() >= track.effective_start_time()) as u8;
 
-                    let time = if is_absolute_time { disc.get_head_position() } else { disc.get_head_position().sub(&track.effective_start_time()) };
+                    let time = if report_absolute { disc.get_head_position() } else { disc.get_head_position().sub(&track.effective_start_time()) };
                     report[3] = time.m();
-                    report[4] = if is_absolute_time { time.s() } else { time.s() + 0x80 };
+                    report[4] = if report_absolute { time.s() } else { time.s() + 0x80 };
                     report[5] = time.f();
                     // TODO peak values
-                    //info!("CDROM Sending play report: {:?} is_absolute={is_absolute_time} time={:?} track={:?}",report,time,track);
+                    info!("CDROM Sending play report: {:?} is_absolute={report_absolute} time={:?} track={:?}",report,time,track);
                 }
 
                 for e in report.iter_mut() {
