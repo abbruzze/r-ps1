@@ -134,7 +134,7 @@ impl Controller {
 
     pub fn reset(&mut self) {
         self.state = ControllerState::Init;
-        self.memory_card.reset();
+        //self.memory_card.reset();
         self.memory_card_selected = false;
     }
 
