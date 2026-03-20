@@ -181,15 +181,15 @@ impl Emulator {
             debugger.execute();
         });
 
-        // match self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\test.mcd")) {
-        //     Ok(_) => info!("Memory Card loaded"),
-        //     Err(e) => error!("Memory card error: {:?}",e),
-        // }
+        match self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\memcard1.mcd")) {
+            Ok(_) => info!("Memory Card loaded"),
+            Err(e) => error!("Memory card error: {:?}",e),
+        }
 
         let mut irq_handler = IrqHandler::new();
 
         const LOAD_EXE_PENDING: bool = false;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\RenderTexturePolygon15BPP.exe");
+        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\Angelic.exe");
         let exe_pre_files: Vec<(String,u32)> = vec![
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\SECOND.DAT"),0x80090000u32),
             //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
@@ -229,8 +229,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\descent\\Descent (USA).cue")).unwrap();
-            //let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\Pawlov.cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\quake2\\Quake II (USA).cue")).unwrap();
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 
@@ -356,8 +355,19 @@ impl Emulator {
                     self.debug_vram_mode ^= true;
                     self.gpu.borrow_mut().set_show_vram(self.debug_vram_mode);
                 }
+                GUIEvent::Shutdown => {
+                    self.shutdown();
+                    self.gpu.borrow_mut().get_renderer_mut().shutdown();
+                }
             }
         }
+    }
+    
+    fn shutdown(&mut self) {
+        info!("Shutting down ...");
+        
+        self.bus.get_sio0_mut().get_controller_mut(0).save();
+        self.bus.get_sio0_mut().get_controller_mut(1).save();
     }
 
     #[inline(always)]

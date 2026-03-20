@@ -1,15 +1,19 @@
+use std::collections::HashMap;
 use super::{CDOperation, GUIEvent};
 use super::{EmuStarter, PS1Event, GPUFrameBuffer, Renderer};
 use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
+use gilrs::{Event, EventType, Gilrs};
+use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use crate::core::config::Config;
+use crate::core::controllers::ControllerButton;
 
 const DEFAULT_WIDTH: usize = 640;
 const DEFAULT_HEIGHT: usize = 263 * 2;
@@ -40,6 +44,9 @@ impl Renderer for GPUPixelsRenderer {
     fn set_last_cd_access(&mut self, access: CDOperation) {
         let _ = self.event_proxy.send_event(PS1Event::CDROMAccess(access));
     }
+    fn shutdown(&mut self) {
+        let _ = self.event_proxy.send_event(PS1Event::Shutdown);
+    }
 }
 
 pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
@@ -51,12 +58,149 @@ pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
     let proxy = event_loop.create_proxy();
 
     let (gui_event_tx, gui_event_rx) = mpsc::channel::<GUIEvent>();
+    let usb_event_tx = gui_event_tx.clone();
+    let usb_config = config.clone();
 
     thread::spawn(move || start(GPUPixelsRenderer::new(proxy),gui_event_rx));
+    thread::spawn(move || usb_controller_loop(usb_config,usb_event_tx));
 
     // start gui
     let mut gui = PixelsRenderer::new(DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_SCALE,gui_event_tx,config);
     event_loop.run_app(&mut gui).unwrap();
+}
+
+fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
+    let mut gilrs = match Gilrs::new() {
+        Ok(gilrs) => {
+            gilrs
+        }
+        Err(e) => {
+            error!("Gilrs error: {}", e);
+            return;
+        }
+    };
+
+    let usb_buttons_map : HashMap<gilrs::Button,ControllerButton> = HashMap::from([
+        (gilrs::Button::South,ControllerButton::Cross),
+        (gilrs::Button::North,ControllerButton::Triangle),
+        (gilrs::Button::East,ControllerButton::Circle),
+        (gilrs::Button::West,ControllerButton::Square),
+        (gilrs::Button::LeftTrigger,ControllerButton::L1),
+        (gilrs::Button::LeftTrigger2,ControllerButton::L2),
+        (gilrs::Button::RightTrigger,ControllerButton::R1),
+        (gilrs::Button::RightTrigger2,ControllerButton::R2),
+        (gilrs::Button::Start,ControllerButton::Start),
+    ]);
+
+    let axis_resolution = 0.5f32;
+
+    info!("Starting USB controller loop ...");
+    let mut last_x_button : Option<ControllerButton> = None;
+    let mut last_y_button : Option<ControllerButton> = None;
+
+    let dpad_2_axis_button = |button:gilrs::Button| {
+        match button {
+            gilrs::Button::DPadLeft => Some(ControllerButton::Left),
+            gilrs::Button::DPadRight => Some(ControllerButton::Right),
+            gilrs::Button::DPadUp => Some(ControllerButton::Up),
+            gilrs::Button::DPadDown => Some(ControllerButton::Left),
+            _ => None,
+        }
+    };
+
+    let mut controller_ids = [-1,-1];
+
+    loop {
+        while let Some(Event { id, event, time, .. }) = gilrs.next_event_blocking(Some(std::time::Duration::from_secs(1))) {
+            debug!("{:?} New event from {}: {:?}", time, id, event);
+            let id : usize = id.into();
+            if controller_ids[0] == -1 && controller_ids[1] != id as i32 {
+                controller_ids[0] = id as i32;
+                info!("Controller #0 assigned to gamepad #{id}");
+            }
+            else if controller_ids[1] == -1 && controller_ids[0] != id as i32 {
+                controller_ids[1] = id as i32;
+                info!("Controller #1 assigned to gamepad #{id}");
+            }
+            let controller_id = if controller_ids[0] == id as i32 { 0 } else { 1 };
+
+            match event {
+                EventType::Connected => {
+                    info!("New gamepad #{} connected", id);
+                }
+                EventType::Disconnected => {
+                    if controller_ids[0] == id as i32 {
+                        controller_ids[0] = -1;
+                        info!("Gamepad #{} disconnected from controller #0", id);
+                    }
+                    else if controller_ids[1] == id as i32 {
+                        controller_ids[1] = -1;
+                        info!("Gamepad #{} disconnected from controller #1", id);
+                    }
+                }
+                EventType::ButtonPressed(button,_code) => {
+                    match usb_buttons_map.get(&button) {
+                        Some(button) => {
+                            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, *button, true));
+                        }
+                        None => {
+                            match dpad_2_axis_button(button) {
+                                Some(button) => {
+                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, true));
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                }
+                EventType::ButtonReleased(button,_code) => {
+                    match usb_buttons_map.get(&button) {
+                        Some(button) => {
+                            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, *button, false));
+                        }
+                        None => {
+                            match dpad_2_axis_button(button) {
+                                Some(button) => {
+                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, false));
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                }
+                EventType::AxisChanged(axis,value,_code) => {
+                    match axis {
+                        gilrs::Axis::LeftStickX | gilrs::Axis::RightStickX=> {
+                            if value > -axis_resolution && value < axis_resolution {
+                                if let Some(button) = last_x_button.take() {
+                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, false));
+                                }
+                            }
+                            else {
+                                let button = if value < -axis_resolution { ControllerButton::Left } else { ControllerButton::Right };
+                                let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, true));
+                                last_x_button = Some(button);
+                            }
+                        }
+                        gilrs::Axis::LeftStickY | gilrs::Axis::RightStickY=> {
+                            if value > -axis_resolution && value < axis_resolution {
+                                if let Some(button) = last_y_button.take() {
+                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, false));
+                                }
+                            }
+                            else {
+                                let button = if value < -axis_resolution { ControllerButton::Down } else { ControllerButton::Up };
+                                let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, true));
+                                last_y_button = Some(button);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 struct PixelsRenderer {
@@ -213,7 +357,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         window_ref.request_redraw();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: PS1Event) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PS1Event) {
         match event {
             PS1Event::NewFrame(frame, last_performance) => {
                 self.new_frame(&frame,last_performance);
@@ -228,12 +372,18 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             PS1Event::CDROMAccess(access) => {
                 self.last_cd_access = Some(access);
             }
+            PS1Event::Shutdown => {
+                info!("Shutting down GUI ...");
+                event_loop.exit();
+            }
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                let _ = self.gui_event_tx.send(GUIEvent::Shutdown);
+            },
             WindowEvent::Resized(new_size) => {
                 if let Some(pixels) = &mut self.pixels {
                     if pixels.resize_surface(new_size.width, new_size.height).is_err() {

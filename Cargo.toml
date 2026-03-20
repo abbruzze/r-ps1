@@ -18,11 +18,10 @@ wgpu = "28.0.0"
 pollster = "0.3"
 regex = "1.12.3"
 cpal = "0.17.3"
+gilrs = "0.11.1"
 
-[features]
-default = ["draw_polygon_bounding_box"]
-draw_polygon_bounding_box = []
-
+[build]
+rustflags = ["-C", "target-cpu=native"]
 
 [profile.release]
 #debug = true
@@ -30,3 +29,15 @@ draw_polygon_bounding_box = []
 #lto = "fat"
 #codegen-units = 1
 #panic = "abort"
+
+[profile.fast]
+inherits = "release"
+opt-level = 3          # massimo livello di ottimizzazione
+lto = "fat"           # link-time optimization completa
+codegen-units = 1     # migliore ottimizzazione (più lento compilare)
+panic = "abort"       # elimina overhead unwinding
+strip = true          # riduce dimensione binario
+
+# opzionale ma utile
+debug = false
+incremental = false

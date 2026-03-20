@@ -10,6 +10,7 @@ pub enum PS1Event {
     WarpMode(bool),
     Paused(bool),
     CDROMAccess(CDOperation),
+    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub enum GUIEvent {
     WarpMode,
     Paused,
     VRAMDebugMode,
+    Shutdown,
 }
 
 /*
@@ -48,4 +50,5 @@ pub trait Renderer {
     fn set_warp_mode(&mut self,enabled:bool);
     fn set_paused(&mut self,paused:bool);
     fn set_last_cd_access(&mut self,access:CDOperation);
+    fn shutdown(&mut self);
 }
