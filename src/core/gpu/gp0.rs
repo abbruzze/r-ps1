@@ -138,11 +138,11 @@ impl GPU {
     }
 
     fn schedule_command_completion(&mut self,cycles:usize,clock:&mut Clock) {
-        if cycles > 0 {
-            self.ready_bits.ready_to_receive_cmd_word = false;
-            //clock.schedule_gpu_dot_clock(EventType::GPUCommandCompleted, cycles as u64, self.display_config.h_res.get_divider());
-            clock.schedule_gpu(EventType::GPUCommandCompleted, cycles as u64);
-        }
+        // if cycles > 0 {
+        //     self.ready_bits.ready_to_receive_cmd_word = false;
+        //     //clock.schedule_gpu_dot_clock(EventType::GPUCommandCompleted, cycles as u64, self.display_config.h_res.get_divider());
+        //     clock.schedule_gpu(EventType::GPUCommandCompleted, cycles as u64);
+        // }
     }
 
     /*

@@ -232,6 +232,7 @@ struct DisplayConfig {
     display_depth: DisplayDepth,
     display_disabled: bool,
     interlaced: bool,
+    pending_vram_start_xy: Option<(u16,u16)>,
 }
 
 impl DisplayConfig {
@@ -962,6 +963,10 @@ impl GPU {
         irq_handler.set_irq(InterruptType::VBlank);
         // new frame
         self.generate_new_frame();
+        if let Some((vram_start_x,vram_start_y)) = self.display_config.pending_vram_start_xy.take() {
+            self.display_config.vram_x_start = vram_start_x;
+            self.display_config.vram_y_start = vram_start_y;
+        }
     }
 
     fn generate_new_frame(&mut self) {
@@ -992,8 +997,9 @@ impl GPU {
             let vram_x0 = self.display_config.vram_x_start as usize;
             let vram_y0 = self.display_config.vram_y_start as usize;
             let is24_bit = !self.show_whole_vram && matches!(self.display_config.display_depth,DisplayDepth::D24Bits);
+            let row_offset_base = crt_start_y_offset * (crt_width << 2) + (crt_start_x_offset << 2);
             for y in 0..frame_height.min(crt_height) {
-                let mut row_offset = (crt_start_y_offset + y) * (crt_width << 2) + (crt_start_x_offset << 2);
+                let mut row_offset = y * (crt_width << 2) + row_offset_base;
                 for x in 0..frame_width {
                     let vram_x = vram_x0 + x;
                     let vram_y = vram_y0 + y;
