@@ -109,6 +109,10 @@ impl Controller {
 
         }
     }
+    
+    pub fn save(&mut self) {
+        self.memory_card.save();
+    }
 
     pub fn get_memory_card_mut(&mut self) -> &mut MemoryCard {
         &mut self.memory_card

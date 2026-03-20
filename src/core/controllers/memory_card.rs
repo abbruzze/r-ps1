@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io;
-use std::io::{ErrorKind, Read};
-use tracing::warn;
+use std::io::{ErrorKind, Read, Write};
+use tracing::{info, warn};
 use crate::core::controllers::MemoryCardCommand;
 
 #[derive(Debug)]
@@ -14,6 +14,7 @@ pub struct MemoryCard {
     sector_number: u16,
     checksum: u8,
     bytes_count: usize,
+    modified: bool,
 }
 
 impl MemoryCard {
@@ -29,9 +30,22 @@ impl MemoryCard {
             sector_number: 0,
             checksum: 0,
             bytes_count: 0,
+            modified: false,
         };
 
         card
+    }
+
+    pub(super) fn save(&mut self) {
+        if self.modified {
+            if let Some(file_name) = self.file_name.as_ref() {
+                let mut file = File::create(file_name).unwrap();
+                match file.write_all(&self.memory) {
+                    Ok(_) => info!("Memory card snapshot {} saved",file_name),
+                    Err(e) => warn!("Error writing memory card snapshot {}: {}",file_name,e),
+                }
+            }
+        }
     }
 
     pub(super) fn reset(&mut self) {
@@ -76,6 +90,7 @@ impl MemoryCard {
         self.memory[(self.sector_number << 7) as usize + self.bytes_count] = byte;
         self.bytes_count += 1;
         self.checksum ^= byte;
+        self.modified = true;
         self.bytes_count == 128
     }
 
