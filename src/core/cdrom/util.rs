@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Result};
+use std::path::PathBuf;
 use regex::Regex;
+use tracing::error;
 use crate::core::cdrom::Region;
 
 const SECTOR_SIZE: u64 = 2352;
@@ -19,7 +21,7 @@ SxPx - Japan (NTSC)
 SxEx - Europe (PAL)
 SxUx - USA (NTSC)
  */
-pub fn get_cd_region(disc_path: &str) -> Option<Region> {
+pub fn get_cd_region(disc_path: &PathBuf) -> Option<Region> {
     match read_system_cnf(disc_path) {
         Ok(cnf) => {
             let boot_re = Regex::new(r"\s*BOOT\s*=\s*cdrom:\\(.*);.*").unwrap();
@@ -40,11 +42,14 @@ pub fn get_cd_region(disc_path: &str) -> Option<Region> {
                 None => None
             }
         }
-        Err(_) => None,
+        Err(e) => {
+            error!("Error reading SYSTEM.CNF from {:?}: {}",disc_path,e);
+            None
+        },
     }
 }
 
-pub fn read_system_cnf(path: &str) -> Result<String> {
+pub fn read_system_cnf(path: &PathBuf) -> Result<String> {
     let mut file = File::open(path)?;
 
     // Step 1: Read Primary Volume Descriptor (sector 16)

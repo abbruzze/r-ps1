@@ -1,7 +1,7 @@
 pub mod pixels;
 
 use std::sync::{mpsc, Arc};
-use crate::core::cdrom::CDOperation;
+use crate::core::cdrom::{CDOperation, Region};
 use crate::core::controllers::ControllerButton;
 
 #[derive(Debug, Clone)]
@@ -11,6 +11,7 @@ pub enum PS1Event {
     Paused(bool),
     CDROMAccess(CDOperation),
     Shutdown,
+    SetRegion(Region)
 }
 
 #[derive(Debug, Clone)]
@@ -51,4 +52,5 @@ pub trait Renderer {
     fn set_paused(&mut self,paused:bool);
     fn set_last_cd_access(&mut self,access:CDOperation);
     fn shutdown(&mut self);
+    fn set_region(&mut self,region:Region);
 }

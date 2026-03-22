@@ -54,7 +54,7 @@ impl Speed {
     }
 }
 
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug,Copy,Clone,PartialEq)]
 pub enum Region {
     Japan,
     USA,
@@ -67,6 +67,12 @@ impl Region {
             Region::Japan => 'I',
             Region::USA => 'A',
             Region::Europe => 'E',
+        }
+    }
+    pub fn get_crt_total_lines(&self) -> usize {
+        match self {
+            Region::Japan | Region::USA => 263,
+            Region::Europe => 312,
         }
     }
 }

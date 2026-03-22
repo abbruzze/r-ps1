@@ -96,6 +96,10 @@ impl Clock {
             clock_config,
         }
     }
+    
+    pub fn set_clock_config(&mut self,clock_config:ClockConfig) {
+        self.clock_config = clock_config;
+    }
 
     pub fn get_clock_config(&self) -> &ClockConfig {
         &self.clock_config

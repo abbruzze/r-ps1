@@ -1,5 +1,5 @@
 use crate::audio::{AudioDevice, AudioSample};
-use crate::core::cdrom::{CDOperation, CDRom};
+use crate::core::cdrom::{CDOperation, CDRom, Region};
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
 use crate::core::cpu::{disassembler, Cpu};
@@ -7,7 +7,7 @@ use crate::core::debugger;
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
 use crate::core::debugger::{DebuggerResponse, RunMode};
 use crate::core::dma::{DMAController, DmaDevice, DummyDMAChannel};
-use crate::core::gpu::GPU;
+use crate::core::gpu::{VideoMode, GPU};
 use crate::core::interrupt::IrqHandler;
 use crate::core::mdec::{MDec, MDecIn, MDecOut};
 use crate::core::memory::bus::Bus;
@@ -24,7 +24,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use std::{fs, io, thread};
 use thread::spawn;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use crate::audio::cpal::CpalAudioDevice;
 
 
@@ -229,7 +229,23 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\quake2\\Quake II (USA).cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\pes\\Pro Evolution Soccer (Europe) (Es,It).cue")).unwrap();
+            match &disc.get_region() {
+                Some(region) => {
+                    let (clock_config,video_mode) = match region {
+                        Region::USA | Region::Japan => (ClockConfig::NTSC,VideoMode::Ntsc),
+                        Region::Europe => (ClockConfig::PAL,VideoMode::Pal),
+                    };
+                    info!("Setting region to {:?} and clock to {:?}",region,clock_config);
+                    self.bus.get_clock_mut().set_clock_config(clock_config);
+                    self.gpu.borrow_mut().get_renderer_mut().set_region(*region);
+                    self.gpu.borrow_mut().set_video_mode(video_mode);
+                }
+                None => {
+                    warn!("Cannot found region on disc {}, default to NTSC",disc.get_cue_file_name());
+                }
+            }
+
             self.cdrom.borrow_mut().insert_disk(disc);
         }
 

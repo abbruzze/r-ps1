@@ -12,11 +12,11 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
+use crate::core::cdrom::Region;
 use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
 
 const DEFAULT_WIDTH: usize = 640;
-const DEFAULT_HEIGHT: usize = 263 * 2;
 const DEFAULT_SCALE: usize = 1;
 
 const FPS_PERIOD : f64 = 2.0;
@@ -47,6 +47,9 @@ impl Renderer for GPUPixelsRenderer {
     fn shutdown(&mut self) {
         let _ = self.event_proxy.send_event(PS1Event::Shutdown);
     }
+    fn set_region(&mut self,region:Region) {
+        let _ = self.event_proxy.send_event(PS1Event::SetRegion(region));
+    }
 }
 
 pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
@@ -65,7 +68,7 @@ pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
     thread::spawn(move || usb_controller_loop(usb_config,usb_event_tx));
 
     // start gui
-    let mut gui = PixelsRenderer::new(DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_SCALE,gui_event_tx,config);
+    let mut gui = PixelsRenderer::new(DEFAULT_SCALE, gui_event_tx, config);
     event_loop.run_app(&mut gui).unwrap();
 }
 
@@ -219,15 +222,17 @@ struct PixelsRenderer {
     debug_mode: bool,
     last_performance: u8,
     last_cd_access: Option<CDOperation>,
+    region: Region,
+    pending_region_change: Option<Region>,
 }
 
 impl PixelsRenderer {
-    pub fn new(width: usize, height: usize, scale: usize,gui_event_tx: mpsc::Sender<GUIEvent>,config: Config) -> Self {
+    pub fn new(scale: usize,gui_event_tx: mpsc::Sender<GUIEvent>,config: Config) -> Self {
         Self {
             window: None,
             pixels: None,
-            width,
-            height,
+            width : DEFAULT_WIDTH,
+            height : Region::USA.get_crt_total_lines() * 2,
             scale,
             fps_last: Instant::now(),
             fps_frames: 0,
@@ -239,6 +244,8 @@ impl PixelsRenderer {
             debug_mode: false,
             last_performance: 0,
             last_cd_access: None,
+            region: Region::USA,
+            pending_region_change: None,
         }
     }
 
@@ -275,10 +282,10 @@ impl PixelsRenderer {
                     if self.debug_mode {
                         info.push_str(" (debug mode)");
                     }
-                    window.set_title(&format!("PS1 Emulator - FPS: {:.2}{info} CPU: {:3}% [{}x{}] {cd_info}", fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("PS1 Emulator - ({:?}) FPS: {:.2}{info} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
                 }
                 else {
-                    window.set_title(&format!("PS1 Emulator - FPS: {:.2} CPU: {:3}% [{}x{}] {cd_info}", fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("PS1 Emulator - ({:?}) FPS: {:.2} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
                 }
             }
             self.fps_frames = 0;
@@ -289,17 +296,23 @@ impl PixelsRenderer {
     fn new_frame(&mut self, frame: &GPUFrameBuffer,last_performance:u8) {
         self.last_performance = last_performance;
         if let Some(pixels) = &mut self.pixels {
-            if frame.crt_width != self.width || frame.crt_height != self.height {
-                println!("PixelsRenderer: Frame size changed from {}x{} to {}x{}", self.width, self.height, frame.visible_width, frame.visible_height);
+            if frame.crt_width != self.width || frame.crt_height != self.height || self.pending_region_change.is_some() {
+                let mut region_changed = false;
+                if let Some(region) = self.pending_region_change.take() && self.region != region {
+                    info!("Region set to {:?}",region);
+                    self.region = region;
+                    region_changed = true;
+                }
+                info!("PixelsRenderer: Frame size changed from {}x{} to {}x{}", self.width, self.height, frame.visible_width, frame.visible_height);
                 self.width = frame.crt_width;
                 self.height = frame.crt_height;
-                if self.debug_mode != frame.debug_frame {
+                if self.debug_mode != frame.debug_frame || region_changed {
                     self.debug_mode = frame.debug_frame;
                     let new_size = if frame.debug_frame {
                         winit::dpi::PhysicalSize::new(self.width as u32, self.height as u32)
                     }
                     else {
-                        winit::dpi::PhysicalSize::new(DEFAULT_WIDTH as u32,DEFAULT_HEIGHT as u32)
+                        winit::dpi::PhysicalSize::new(DEFAULT_WIDTH as u32, (self.region.get_crt_total_lines() * 2) as u32)
                     };
                     let _ = self.window.unwrap().request_inner_size(new_size);
                 }
@@ -307,6 +320,8 @@ impl PixelsRenderer {
                 if pixels.resize_buffer(self.width as u32, self.height as u32).is_err() {
                     println!("Pixels buffer resize error");
                 }
+                let window_size = self.window.unwrap().inner_size();
+                pixels.resize_surface(window_size.width, window_size.height).unwrap();
             }
             let frame_buffer = pixels.frame_mut();
             frame_buffer.copy_from_slice(&frame.frame);
@@ -323,7 +338,7 @@ impl PixelsRenderer {
 impl ApplicationHandler<PS1Event> for PixelsRenderer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
-            .with_title("PS1 Emulator - ApplicationHandler Demo")
+            .with_title("PS1 Emulator - Starting up ...")
             .with_inner_size(winit::dpi::LogicalSize::new(
                 (self.width * self.scale) as u32,
                 (self.height * self.scale) as u32,
@@ -336,7 +351,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         // Crea pixels
         let window_size = window_ref.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height,window_ref);
-        let mut builder = PixelsBuilder::new(DEFAULT_WIDTH as u32, DEFAULT_HEIGHT as u32, surface_texture);
+        let mut builder = PixelsBuilder::new(DEFAULT_WIDTH as u32, (self.region.get_crt_total_lines() * 2) as u32, surface_texture);
         builder = builder.request_adapter_options(wgpu::RequestAdapterOptions {
             // 1 - GPU: Pick one or the other
             //power_preference: wgpu::PowerPreference::LowPower,
@@ -375,6 +390,9 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             PS1Event::Shutdown => {
                 info!("Shutting down GUI ...");
                 event_loop.exit();
+            }
+            PS1Event::SetRegion(region) => {
+                self.pending_region_change = Some(region);
             }
         }
     }

@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
-use crate::core::cdrom::{cue, Region};
+use crate::core::cdrom::{cue, util, Region};
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
 
@@ -379,6 +379,7 @@ impl Disc {
 
         disc.tracks.iter().for_each(|t| info!("  Track [{:?}] {}: {}/{} - {}",t.track_type(),t.track_number(),t.start_time(),t.effective_start_time(),t.end_time()));
 
+        disc.region = util::get_cd_region(&disc.files[0].1);
         Ok(disc)
     }
 
