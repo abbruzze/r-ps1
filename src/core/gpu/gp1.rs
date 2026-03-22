@@ -127,9 +127,8 @@ impl GPU {
     Unknown if using Y values in 512-1023 range is supported (with 2 MB VRAM).
      */
     fn gp1_start_of_display_area(&mut self,cmd:u32) {
-        self.display_config.pending_vram_start_xy = Some(((cmd & 0x3FF) as u16,((cmd >> 10) & 0x1FF) as u16));
-        // self.display_config.vram_x_start = (cmd & 0x3FF) as u16;
-        // self.display_config.vram_y_start = ((cmd >> 10) & 0x1FF) as u16;
+        self.display_config.vram_x_start = (cmd & 0x3FF) as u16;
+        self.display_config.vram_y_start = ((cmd >> 10) & 0x1FF) as u16;
         debug!("GP1(05) Start of display AREA X={} Y={}",self.display_config.vram_x_start,self.display_config.vram_y_start);
     }
     /*

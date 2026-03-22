@@ -232,12 +232,11 @@ struct DisplayConfig {
     display_depth: DisplayDepth,
     display_disabled: bool,
     interlaced: bool,
-    pending_vram_start_xy: Option<(u16,u16)>,
 }
 
 impl DisplayConfig {
     fn visible_area(&self) -> (usize,usize) {
-        let width = (((self.horizontal_end - self.horizontal_start) as f32) / self.h_res.get_divider() as f32) as usize - 1;
+        let width = (((self.horizontal_end - self.horizontal_start) as f32) / self.h_res.get_divider() as f32) as usize;
         let mut height = (self.vertical_end - self.vertical_start) as usize;
         if self.interlaced {
             height <<= 1;
@@ -354,7 +353,7 @@ impl VideoVerticalResolution {
 }
 
 #[derive(Copy,Clone,Debug)]
-enum VideoMode {
+pub enum VideoMode {
     Ntsc,
     Pal
 }
@@ -775,6 +774,12 @@ impl GPU {
         gpu
     }
 
+    pub fn set_video_mode(&mut self,video_mode:VideoMode) {
+        self.display_config.video_mode = video_mode;
+        self.raster.total_lines = video_mode.total_lines();
+        self.raster.total_cycles = video_mode.horizontal_cycles();
+    }
+
     pub fn set_show_vram(&mut self,enabled:bool) {
         self.show_whole_vram = enabled;
     }
@@ -963,10 +968,6 @@ impl GPU {
         irq_handler.set_irq(InterruptType::VBlank);
         // new frame
         self.generate_new_frame();
-        if let Some((vram_start_x,vram_start_y)) = self.display_config.pending_vram_start_xy.take() {
-            self.display_config.vram_x_start = vram_start_x;
-            self.display_config.vram_y_start = vram_start_y;
-        }
     }
 
     fn generate_new_frame(&mut self) {
