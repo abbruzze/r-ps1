@@ -6,10 +6,8 @@ use crate::core::controllers::Controller;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 
 // some attempts here...
-// 8 seems too low for pad.exe
-// 16 seems too high for resolution.exe
 const TX_RX_DATA_CYCLES : usize = 10 * CPU_CLOCK / 250_000; // 8 bit sent + 8 bit received at 250 kbps
-const ACK_TIMEOUT_CYCLES : u64 = 96;
+const ACK_TIMEOUT_CYCLES : u64 = 100;
 
 /*
 SIO_TX_DATA Notes
@@ -132,7 +130,7 @@ impl SIO0 {
 
         let new_selected_device = if dtr_on {
             let device = ((value >> 13) & 1) as u8;
-            if !prev_dtr_on { // /CS -> high -> low
+            if !prev_dtr_on || self.selected_device != Some(device) { // /CS -> high -> low
                 debug!("New device #{device} selected and reset");
                 self.controllers[device as usize].reset();
                 Some(device)

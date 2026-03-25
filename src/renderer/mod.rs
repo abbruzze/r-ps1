@@ -11,7 +11,8 @@ pub enum PS1Event {
     Paused(bool),
     CDROMAccess(CDOperation),
     Shutdown,
-    SetRegion(Region)
+    SetRegion(Region),
+    AudioMute(bool),
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +22,7 @@ pub enum GUIEvent {
     Paused,
     VRAMDebugMode,
     Shutdown,
+    Mute,
 }
 
 /*
@@ -53,4 +55,5 @@ pub trait Renderer {
     fn set_last_cd_access(&mut self,access:CDOperation);
     fn shutdown(&mut self);
     fn set_region(&mut self,region:Region);
+    fn set_audio_mute(&mut self,mute:bool);
 }

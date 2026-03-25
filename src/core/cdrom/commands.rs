@@ -15,6 +15,8 @@ pub(super) const STAT_NO_DATA : &[u8] = &[];
 
 pub(super) const FIRST_RESPONSE_IRQ_DELAY_44100 : usize = 1;
 pub(super) const STD_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = delay_cycles_44100(0x4A73);
+pub(super) const GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100: usize = 24;
+pub(super) const READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100: usize = 44_100;
 
 const fn delay_cycles_44100(cycles:usize) -> usize {
     cycles / (33_868_800 / 44_100)
@@ -233,8 +235,8 @@ impl CDRom {
     }
     // Setloc - Command 02h,amm,ass,asect --> INT3(stat)
     fn command_setloc(&mut self) -> CommandState {
-        let min = BCD::decode(self.parameter_fifo.pop_front().unwrap());
-        let sec = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+        let mut min = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+        let mut sec = BCD::decode(self.parameter_fifo.pop_front().unwrap());
         let frame = BCD::decode(self.parameter_fifo.pop_front().unwrap());
 
         if let Some(loc) = DiscTime::new_checked(min, sec, frame) {
@@ -317,6 +319,22 @@ impl CDRom {
     fn command_test(&mut self) -> CommandState {
         let sub_function = self.parameter_fifo.pop_front().unwrap();
         match sub_function {
+            0x04 => {
+                info!("CDROM test sub function 0x04");
+                self.activate_motor(true);
+                self.make_stat_response(INT3,Command::Test)
+            }
+            0x05 => {
+                info!("CDROM test sub function 0x05");
+                self.make_response(
+                    Command::Test,
+                    INT3,
+                    FIRST_RESPONSE_IRQ_DELAY_44100,
+                    &[0x00,0x00],
+                    STAT_NO_ERR,
+                    CommandState::Idle
+                )
+            }
             0x20 => {
                 info!("CDROM test sub function 0x20: sending {:?}",CDROM_VER);
                 self.make_response(
@@ -392,7 +410,7 @@ impl CDRom {
                 STAT_NO_ERR,
                 CommandState::Delay {
                     cmd: Command::GetID,
-                    delay_cycles: STD_SECOND_RESPONSE_IRQ_DELAY_44100,
+                    delay_cycles: GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100,
                     next_state: Box::new(
                         CommandState::Response2 { cmd: Command::GetID }
                     )
@@ -414,7 +432,7 @@ impl CDRom {
                 STAT_NO_ERR,
                 CommandState::Delay {
                     cmd: Command::ReadTOC,
-                    delay_cycles: STD_SECOND_RESPONSE_IRQ_DELAY_44100,
+                    delay_cycles: READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100,
                     next_state: Box::new(
                         CommandState::Response2 { cmd: Command::ReadTOC }
                     )

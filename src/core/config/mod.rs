@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use tracing::error;
 use winit::keyboard::KeyCode;
 use crate::core::controllers::ControllerButton;
 
@@ -164,7 +166,7 @@ pub fn keycode_to_string(keycode: KeyCode) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyMapping {
     pub cross: String,
     pub circle: String,
@@ -184,8 +186,8 @@ pub struct KeyMapping {
     pub dpad_right: String,
 }
 
-impl Default for KeyMapping {
-    fn default() -> Self {
+impl KeyMapping {
+    fn default_controller1() -> Self {
         Self {
             cross: "KeyX".to_string(),
             circle: "KeyZ".to_string(),
@@ -213,16 +215,62 @@ impl Default for KeyMapping {
             dpad_right: "ArrowRight".to_string(),
         }
     }
+    fn default_controller2() -> Self {
+        Self {
+            cross: "KeyK".to_string(),
+            circle: "KeyJ".to_string(),
+            square: "KeyL".to_string(),
+            triangle: "KeyH".to_string(),
+
+            // Shoulder buttons
+            l1: "KeyU".to_string(),
+            l2: "KeyI".to_string(),
+            r1: "KeyO".to_string(),
+            r2: "KeyP".to_string(),
+
+            // Analog sticks
+            l3: None,
+            r3: None,
+
+            // Start/Select
+            start: "Digit0".to_string(),
+            select: "Digit1".to_string(),
+
+            // D-Pad
+            dpad_up: "KeyY".to_string(),
+            dpad_down: "KeyH".to_string(),
+            dpad_left: "KeyN".to_string(),
+            dpad_right: "KeyM".to_string(),
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct InputMapper {
-    key_map: HashMap<KeyCode, ControllerButton>,
+#[derive(Debug, Clone, Serialize)]
+#[serde(into = "KeyMapping")]
+pub struct ControllerKeyMapping {
+    pub key_mapping: KeyMapping,
+    pub key_map: HashMap<KeyCode, ControllerButton>,
 }
 
-impl InputMapper {
-    pub fn new() -> Self {
-        Self::from_config(KeyMapping::default())
+impl<'de> serde::Deserialize<'de> for ControllerKeyMapping {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mapping = KeyMapping::deserialize(d)?;
+        Ok(ControllerKeyMapping::from_config(mapping))
+    }
+}
+
+impl From<ControllerKeyMapping> for KeyMapping {
+    fn from(mapper: ControllerKeyMapping) -> Self {
+        mapper.key_mapping
+    }
+}
+
+impl ControllerKeyMapping {
+    pub fn default_controller_1() -> Self {
+        Self::from_config(KeyMapping::default_controller1())
+    }
+    pub fn default_controller_2() -> Self {
+        Self::from_config(KeyMapping::default_controller2())
     }
 
     pub fn map_key(&self, key: KeyCode) -> Option<ControllerButton> {
@@ -295,22 +343,82 @@ impl InputMapper {
         }
 
         Self {
+            key_mapping: config,
             key_map,
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub controller_1_config: InputMapper,
-    pub controller_2_config: InputMapper,
+#[derive(Debug, Clone, Serialize, Deserialize,Default)]
+pub enum RegionPolicyConfig {
+    #[default]
+    Auto,
+    Usa,
+    Japan,
+    Europe
 }
 
-impl Default for Config {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControllersConfig {
+    pub controller1_enabled: bool,
+    pub controller2_enabled: bool,
+    pub controller_1_keymap: ControllerKeyMapping,
+    pub controller_2_keymap: ControllerKeyMapping,
+    pub memory_card_1_path: Option<String>,
+    pub memory_card_2_path: Option<String>,
+    pub save_writings_to_disk: bool,
+    pub auto_discover_usb_controllers: bool,
+}
+
+impl Default for ControllersConfig {
     fn default() -> Self {
         Self {
-            controller_1_config: InputMapper::new(),
-            controller_2_config: InputMapper::new(),
+            controller1_enabled: true,
+            controller2_enabled: false,
+            controller_1_keymap: ControllerKeyMapping::default_controller_1(),
+            controller_2_keymap: ControllerKeyMapping::default_controller_2(),
+            memory_card_1_path: None,
+            memory_card_2_path: None,
+            save_writings_to_disk: true,
+            auto_discover_usb_controllers: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioConfig {
+    pub buffer_capacity_in_millis: usize,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            buffer_capacity_in_millis: 50,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize,Default)]
+pub struct Config {
+    pub bios_path: Option<String>,
+    pub region_policy: RegionPolicyConfig,
+    pub controllers: ControllersConfig,
+    pub audio_config: AudioConfig,
+}
+
+impl Config {
+    pub fn load_or_default(path: &str) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_yaml::from_str(&text).ok()).unwrap_or_else(|| {
+            error!("Config file not found or an error occurred during deserialization. Using default values.");
+            Config::default()
+        })
+    }
+
+    pub fn save(&self, path: &str) {
+        if let Ok(text) = serde_yaml::to_string(self) {
+            let _ = std::fs::write(path, text);
         }
     }
 }

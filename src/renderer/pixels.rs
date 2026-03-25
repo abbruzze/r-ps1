@@ -50,6 +50,9 @@ impl Renderer for GPUPixelsRenderer {
     fn set_region(&mut self,region:Region) {
         let _ = self.event_proxy.send_event(PS1Event::SetRegion(region));
     }
+    fn set_audio_mute(&mut self,mute:bool) {
+        let _ = self.event_proxy.send_event(PS1Event::AudioMute(mute));
+    }
 }
 
 pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
@@ -216,8 +219,9 @@ struct PixelsRenderer {
     fps_frames: u32,
     gui_event_tx: mpsc::Sender<GUIEvent>,
     config: Config,
-    last_key_repeat_state: bool,
+    last_key: bool,
     warp_mode: bool,
+    audio_muted:bool,
     paused: bool,
     debug_mode: bool,
     last_performance: u8,
@@ -238,8 +242,9 @@ impl PixelsRenderer {
             fps_frames: 0,
             gui_event_tx,
             config,
-            last_key_repeat_state: false,
+            last_key: false,
             warp_mode: false,
+            audio_muted: false,
             paused: false,
             debug_mode: false,
             last_performance: 0,
@@ -253,7 +258,7 @@ impl PixelsRenderer {
         self.fps_frames += 1;
         let duration = self.fps_last.elapsed().as_secs_f64();
         if duration >= FPS_PERIOD || update_now {
-            let fps = self.fps_frames as f64 / duration;
+            let fps = (self.fps_frames as f64 / duration).ceil();
             if let Some(window) = self.window {
                 let cd_info : String = match &self.last_cd_access {
                     Some(access) => {
@@ -271,7 +276,7 @@ impl PixelsRenderer {
                     }
                     None => String::from("")
                 };
-                if self.warp_mode || self.paused || self.debug_mode {
+                if self.warp_mode || self.paused || self.debug_mode  || self.audio_muted {
                     let mut info = String::new();
                     if self.warp_mode {
                         info.push_str(" (warp mode)");
@@ -282,10 +287,13 @@ impl PixelsRenderer {
                     if self.debug_mode {
                         info.push_str(" (debug mode)");
                     }
-                    window.set_title(&format!("PS1 Emulator - ({:?}) FPS: {:.2}{info} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
+                    if self.audio_muted {
+                        info.push_str(" (muted)");
+                    }
+                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
                 }
                 else {
-                    window.set_title(&format!("PS1 Emulator - ({:?}) FPS: {:.2} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
                 }
             }
             self.fps_frames = 0;
@@ -338,7 +346,7 @@ impl PixelsRenderer {
 impl ApplicationHandler<PS1Event> for PixelsRenderer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
-            .with_title("PS1 Emulator - Starting up ...")
+            .with_title("r-ps1 - Starting up ...")
             .with_inner_size(winit::dpi::LogicalSize::new(
                 (self.width * self.scale) as u32,
                 (self.height * self.scale) as u32,
@@ -394,6 +402,9 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             PS1Event::SetRegion(region) => {
                 self.pending_region_change = Some(region);
             }
+            PS1Event::AudioMute(on) => {
+                self.audio_muted = on;
+            }
         }
     }
 
@@ -413,38 +424,36 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                 //self.update_fps(false);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // if event.repeat {
-                //     self.last_key_repeat_state ^= true;
-                // }
-                // else {
-                //     self.last_key_repeat_state = event.state.is_pressed();
-                // }
-                self.last_key_repeat_state = event.state.is_pressed();
+                self.last_key = event.state.is_pressed();
                 if let PhysicalKey::Code(keycode) = event.physical_key {
                     // check warp mode
-                    if keycode == KeyCode::F1 && !self.last_key_repeat_state {
+                    if keycode == KeyCode::F1 && !self.last_key {
                         let _ = self.gui_event_tx.send(GUIEvent::WarpMode);
                         return;
                     }
                     // check pause mode
-                    if keycode == KeyCode::Space && !self.last_key_repeat_state {
+                    if keycode == KeyCode::Space && !self.last_key {
                         let _ = self.gui_event_tx.send(GUIEvent::Paused);
                         return;
                     }
                     // check vram debug mode
-                    if keycode == KeyCode::F2 && !self.last_key_repeat_state {
+                    if keycode == KeyCode::F2 && !self.last_key {
                         let _ = self.gui_event_tx.send(GUIEvent::VRAMDebugMode);
                         return;
                     }
-                    match self.config.controller_1_config.map_key(keycode) {
+                    if keycode == KeyCode::F3 && !self.last_key {
+                        let _ = self.gui_event_tx.send(GUIEvent::Mute);
+                        return;
+                    }
+                    match self.config.controllers.controller_1_keymap.map_key(keycode) {
                         Some(button) => {
-                            let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key_repeat_state));
+                            let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key));
                             //println!("Button {:?} [{}]",button,self.last_key_repeat_state);
                         }
                         None => {
-                            match self.config.controller_2_config.map_key(keycode) {
+                            match self.config.controllers.controller_2_keymap.map_key(keycode) {
                                 Some(button) => {
-                                    let _ = self.gui_event_tx.send(GUIEvent::Control(1,button, self.last_key_repeat_state));
+                                    let _ = self.gui_event_tx.send(GUIEvent::Control(1,button, self.last_key));
                                 }
                                 None => {}
                             }

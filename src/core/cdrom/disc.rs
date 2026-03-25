@@ -379,8 +379,24 @@ impl Disc {
 
         disc.tracks.iter().for_each(|t| info!("  Track [{:?}] {}: {}/{} - {}",t.track_type(),t.track_number(),t.start_time(),t.effective_start_time(),t.end_time()));
 
-        disc.region = util::get_cd_region(&disc.files[0].1);
+        disc.region = util::get_cd_region(&disc.files[0].1).or_else(|| Disc::try_find_region_by_file_name(&disc.cue_file_name));
         Ok(disc)
+    }
+
+    fn try_find_region_by_file_name(file_name:&String) -> Option<Region> {
+        let name = file_name.to_uppercase();
+        if name.contains("(JAPAN)") {
+            Some(Region::Japan)
+        }
+        else if name.contains("(USA)") {
+            Some(Region::USA)
+        }
+        else if name.contains("(EUROPE)") || name.contains("(EU)") {
+            Some(Region::Europe)
+        }
+        else {
+            None
+        }
     }
 
     fn find_track(&mut self,msf:DiscTime) -> Option<(&mut Track,&mut BufReader<File>,PathBuf)> {
@@ -418,6 +434,11 @@ impl Disc {
 
     pub fn get_region(&self) -> Option<Region> {
         self.region
+    }
+
+    pub fn force_region(&mut self,region:Region) {
+        info!("Forcing region to {:?}",region);
+        self.region = Some(region);
     }
 
     pub fn is_audio_cd(&self) -> bool {

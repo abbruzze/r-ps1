@@ -11,7 +11,7 @@ mod audio;
 
 fn main() {
     let config = Config::default();
-    
+
     renderer::pixels::run_loop(|renderer, gui_event_rx| {
         let logger = log::Logger::new("info");
 

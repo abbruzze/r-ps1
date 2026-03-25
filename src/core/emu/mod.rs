@@ -56,9 +56,8 @@ impl Perf {
             self.last_timestamp = Instant::now();
             return 0;
         }
-        //self.counter += 1;
         let elapsed_micros = self.last_timestamp.elapsed().as_micros() as u64;
-        let emulated_micros = (((elapsed_cycles - self.last_cycles) as f32 / clock_config.cpu_hz as f32) * 1_000_000.0) as u64;
+        let emulated_micros = (((elapsed_cycles - self.last_cycles) as f64 / clock_config.cpu_hz as f64) * 1_000_000.0) as u64;
 
         if !warp_mode && emulated_micros > elapsed_micros {
             //println!("Sleeping for {} micros. elapsed={} emulated={}",emulated_micros - elapsed_micros,elapsed_micros,emulated_micros);
@@ -70,7 +69,7 @@ impl Perf {
             self.last_timestamp = Instant::now();
         }
 
-        ((emulated_micros as f32 / elapsed_micros as f32) * 100.0) as u16
+        ((emulated_micros as f32 / elapsed_micros as f32) * 100.0).ceil() as u16
     }
 }
 
@@ -89,6 +88,7 @@ pub struct Emulator {
     gui_event_rx: Receiver<GUIEvent>,
     new_frame: bool,
     warp_mode_enabled: bool,
+    audio_muted:bool,
     paused: bool,
     debug_vram_mode: bool,
     dma_in_progress:bool,
@@ -137,10 +137,11 @@ impl Emulator {
             gui_event_rx,
             new_frame: false,
             warp_mode_enabled: false,
+            audio_muted: false,
             paused: false,
             debug_vram_mode: false,
             dma_in_progress: false,
-            perf: Perf::new(Duration::from_millis(1000)),
+            perf: Perf::new(Duration::from_millis(4000)),
             last_cd_op: CDOperation::Idle,
         };
 
@@ -229,7 +230,7 @@ impl Emulator {
             }
         }
         else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\pes\\Pro Evolution Soccer (Europe) (Es,It).cue")).unwrap();
+            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\tekken3\\Tekken 3 (USA).cue")).unwrap();
             match &disc.get_region() {
                 Some(region) => {
                     let (clock_config,video_mode) = match region {
@@ -338,7 +339,7 @@ impl Emulator {
                 self.last_cd_op = cdrom.clock_44100hz(irq_handler);
                 let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&cdrom,irq_handler));
                 if let Some(audio_device) = self.audio_device.as_mut() {
-                    if !self.warp_mode_enabled {
+                    if !self.warp_mode_enabled && !self.audio_muted {
                         audio_device.play_sample(sample);
                     }
                     // reschedule event
@@ -362,6 +363,10 @@ impl Emulator {
                     self.warp_mode_enabled ^= true;
                     self.gpu.borrow_mut().get_renderer_mut().set_warp_mode(self.warp_mode_enabled);
                     info!("Throttling enabled: {}",!self.warp_mode_enabled);
+                }
+                GUIEvent::Mute => {
+                    self.audio_muted ^= true;
+                    self.gpu.borrow_mut().get_renderer_mut().set_audio_mute(self.audio_muted);
                 }
                 GUIEvent::Paused => {
                     self.paused ^= true;
