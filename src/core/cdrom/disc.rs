@@ -483,6 +483,15 @@ impl Disc {
 
     pub fn seek_sector(&mut self,msf:DiscTime) {
         self.head_position = msf;
+        match self.find_track(msf) {
+            Some((track,..)) => {
+                info!("Seeking to sector {}: found track {}",msf,track.track_number());
+                self.track_number = track.track_number() - 1;
+            },
+            None => {
+                error!("Cannot seek to sector {}: track not found",msf);
+            }
+        }
     }
 
     pub fn get_head_position(&self) -> DiscTime {

@@ -359,13 +359,17 @@ pub enum RegionPolicyConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControllerConfig {
+    pub controller_enabled: bool,
+    pub controller_keymap: ControllerKeyMapping,
+    pub memory_card_path: Option<String>,
+    pub attach_to_usb: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControllersConfig {
-    pub controller1_enabled: bool,
-    pub controller2_enabled: bool,
-    pub controller_1_keymap: ControllerKeyMapping,
-    pub controller_2_keymap: ControllerKeyMapping,
-    pub memory_card_1_path: Option<String>,
-    pub memory_card_2_path: Option<String>,
+    pub controller_1: ControllerConfig,
+    pub controller_2: ControllerConfig,
     pub save_writings_to_disk: bool,
     pub auto_discover_usb_controllers: bool,
 }
@@ -373,12 +377,18 @@ pub struct ControllersConfig {
 impl Default for ControllersConfig {
     fn default() -> Self {
         Self {
-            controller1_enabled: true,
-            controller2_enabled: false,
-            controller_1_keymap: ControllerKeyMapping::default_controller_1(),
-            controller_2_keymap: ControllerKeyMapping::default_controller_2(),
-            memory_card_1_path: None,
-            memory_card_2_path: None,
+            controller_1: ControllerConfig {
+                controller_enabled: true,
+                controller_keymap: ControllerKeyMapping::default_controller_1(),
+                memory_card_path: None,
+                attach_to_usb: true,
+            },
+            controller_2: ControllerConfig {
+                controller_enabled: true,
+                controller_keymap: ControllerKeyMapping::default_controller_2(),
+                memory_card_path: None,
+                attach_to_usb: true,
+            },
             save_writings_to_disk: true,
             auto_discover_usb_controllers: true,
         }

@@ -214,6 +214,8 @@ struct PixelsRenderer {
     pixels: Option<Pixels<'static>>,
     width: usize,
     height: usize,
+    visible_width: usize,
+    visible_height: usize,
     scale: usize,
     fps_last: Instant,
     fps_frames: u32,
@@ -237,6 +239,8 @@ impl PixelsRenderer {
             pixels: None,
             width : DEFAULT_WIDTH,
             height : Region::USA.get_crt_total_lines() * 2,
+            visible_width: 0,
+            visible_height: 0,
             scale,
             fps_last: Instant::now(),
             fps_frames: 0,
@@ -290,10 +294,10 @@ impl PixelsRenderer {
                     if self.audio_muted {
                         info.push_str(" (muted)");
                     }
-                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
                 else {
-                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.width,self.height));
+                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
             }
             self.fps_frames = 0;
@@ -304,6 +308,8 @@ impl PixelsRenderer {
     fn new_frame(&mut self, frame: &GPUFrameBuffer,last_performance:u8) {
         self.last_performance = last_performance;
         if let Some(pixels) = &mut self.pixels {
+            self.visible_width = frame.visible_width;
+            self.visible_height = frame.visible_height;
             if frame.crt_width != self.width || frame.crt_height != self.height || self.pending_region_change.is_some() {
                 let mut region_changed = false;
                 if let Some(region) = self.pending_region_change.take() && self.region != region {
@@ -445,13 +451,13 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                         let _ = self.gui_event_tx.send(GUIEvent::Mute);
                         return;
                     }
-                    match self.config.controllers.controller_1_keymap.map_key(keycode) {
+                    match self.config.controllers.controller_1.controller_keymap.map_key(keycode) {
                         Some(button) => {
                             let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key));
                             //println!("Button {:?} [{}]",button,self.last_key_repeat_state);
                         }
                         None => {
-                            match self.config.controllers.controller_2_keymap.map_key(keycode) {
+                            match self.config.controllers.controller_2.controller_keymap.map_key(keycode) {
                                 Some(button) => {
                                     let _ = self.gui_event_tx.send(GUIEvent::Control(1,button, self.last_key));
                                 }
