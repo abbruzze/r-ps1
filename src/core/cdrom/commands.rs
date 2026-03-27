@@ -15,8 +15,8 @@ pub(super) const STAT_NO_DATA : &[u8] = &[];
 
 pub(super) const FIRST_RESPONSE_IRQ_DELAY_44100 : usize = 1;
 pub(super) const STD_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = delay_cycles_44100(0x4A73);
-pub(super) const GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100: usize = 24;
-pub(super) const READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100: usize = 44_100;
+pub(super) const GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100: usize = STD_SECOND_RESPONSE_IRQ_DELAY_44100;
+pub(super) const READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100: usize = STD_SECOND_RESPONSE_IRQ_DELAY_44100;
 
 const fn delay_cycles_44100(cycles:usize) -> usize {
     cycles / (33_868_800 / 44_100)
