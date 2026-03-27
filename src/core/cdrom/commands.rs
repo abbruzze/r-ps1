@@ -627,8 +627,8 @@ impl CDRom {
         if let Some(disc) = self.disc.as_ref() {
             if let Some(track) = disc.get_current_track() {
                 locp[0] = track.track_number();
-                locp[1] = 0x01;
                 let absolute_time = disc.get_head_position();
+                locp[1] = (absolute_time >= track.effective_start_time()).into();
                 let track_relative_time = disc.get_head_position().sub(&track.start_time());
                 locp[2] = absolute_time.m();
                 locp[3] = absolute_time.s();
@@ -636,7 +636,7 @@ impl CDRom {
                 locp[5] = track_relative_time.m();
                 locp[6] = track_relative_time.s();
                 locp[7] = track_relative_time.f();
-                info!("CDROM getlocp absolute={:?} relative={:?}",absolute_time,track_relative_time);
+                info!("CDROM getlocp absolute={:?} relative={:?} index={}",absolute_time,track_relative_time,locp[1]);
             }
             for e in locp.iter_mut() {
                 *e = BCD::encode(*e);
