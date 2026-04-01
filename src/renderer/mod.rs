@@ -2,6 +2,7 @@ pub mod pixels;
 
 use std::sync::{mpsc, Arc};
 use crate::core::cdrom::{CDOperation, Region};
+use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
 
 #[derive(Debug, Clone)]
@@ -46,7 +47,7 @@ impl GPUFrameBuffer {
     }
 }
 
-pub type EmuStarter<R> = fn(R,mpsc::Receiver<GUIEvent>);
+pub type EmuStarter<R> = fn(R,mpsc::Receiver<GUIEvent>,Config);
 
 pub trait Renderer {
     fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8);

@@ -1,5 +1,6 @@
+use std::path::PathBuf;
 use tracing_subscriber;
-use tracing_subscriber::{fmt, reload, EnvFilter, Registry};
+use tracing_subscriber::{fmt, reload, EnvFilter, FmtSubscriber, Registry};
 use tracing_subscriber::prelude::*;
 
 pub struct Logger {
@@ -7,14 +8,35 @@ pub struct Logger {
 }
 
 impl Logger {
-    pub fn new(initial_level:&str) -> Self {
-        let filter = EnvFilter::new(initial_level);
+    pub fn new(log_path: Option<PathBuf>, level: String) -> Self {
+        // Crea filtro (es: "info", "debug", oppure "module=trace")
+        let filter = EnvFilter::try_new(level).unwrap_or_else(|_| EnvFilter::new("info"));
+
+        // Layer ricaricabile
         let (filter_layer, reload_handle) = reload::Layer::new(filter);
 
-        tracing_subscriber::registry()
-            .with(filter_layer)
-            .with(fmt::layer())
-            .init();
+        // Writer (file o stdout)
+        if let Some(path) = log_path {
+            println!("Log file redirected to: {}",path.display());
+
+            let file = std::fs::File::create(path).expect("Cannot create log file");
+
+            let fmt_layer = fmt::layer().with_writer(file).with_ansi(false);
+
+            let subscriber = Registry::default()
+                .with(filter_layer)
+                .with(fmt_layer);
+
+            tracing::subscriber::set_global_default(subscriber).expect("Cannot init global log settings");
+        } else {
+            let fmt_layer = fmt::layer();
+
+            let subscriber = Registry::default()
+                .with(filter_layer)
+                .with(fmt_layer);
+
+            tracing::subscriber::set_global_default(subscriber).expect("Cannot init global log settings");
+        }
 
         Self { reload_handle }
     }
@@ -24,25 +46,4 @@ impl Logger {
             .modify(|f| *f = EnvFilter::new(level))
             .unwrap();
     }
-}
-
-pub fn init_logging() {
-    let filter = EnvFilter::new("info");
-    let (filter_layer, reload_handle) = reload::Layer::new(filter);
-
-    tracing_subscriber::registry()
-        .with(filter_layer)
-        .with(fmt::layer())
-        .init();
-    /*
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        //.with_env_filter(EnvFilter::from_default_env())
-        .with_timer(fmt::time::Uptime::default()) // timestamp leggibile
-        .with_level(true)
-        //.with_thread_ids(true)
-        //.with_thread_names(true)
-        .init();
-
-     */
 }

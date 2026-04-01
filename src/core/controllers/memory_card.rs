@@ -138,7 +138,8 @@ impl MemoryCard {
         }
         else {
             self.present = true;
-            self.file_name = Some(file_name);
+            self.file_name = Some(file_name.clone());
+            info!("Memory card '{file_name}' loaded successfully.");
             Ok(())
         }
     }

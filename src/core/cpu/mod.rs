@@ -4,6 +4,7 @@ use crate::core::memory;
 use crate::core::memory::{Memory, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
 use std::mem;
 use tracing::{debug, error, info, warn};
+use crate::core::config::Config;
 use crate::core::memory::bus::Bus;
 
 pub mod instruction;
@@ -231,6 +232,9 @@ impl WriteQueue {
             self.tail = (self.tail + 1) & 3;  // Modulo 4 con AND
             self.len += 1;
         }
+        else {
+            error!("WriteQueue overflow");
+        }
     }
 
     fn peek_address(&self) -> Option<u32> {
@@ -318,10 +322,11 @@ pub struct Cpu {
     last_mem_rw_value: u32,
     last_opcode: u32,
     cop2_remaining_cycles: usize,
+    write_queue_enabled: bool,
 }
 
 impl Cpu {
-    pub fn new() -> Self {
+    pub fn new(config:&Config) -> Self {
         let mut cpu = Cpu {
             op_functions: [Cpu::op_nop;80],
             cop2: Cop2::new(),
@@ -346,6 +351,7 @@ impl Cpu {
             last_mem_rw_value: 0,
             last_opcode: 0,
             cop2_remaining_cycles: 0,
+            write_queue_enabled: config.memory_config.cpu_write_queue_enabled,
         };
 
         cpu.init_op_functions();
@@ -613,7 +619,7 @@ impl Cpu {
         // 3) writing to full write-queue
         if opcode.is_write_memory() {
             let target_address = self.get_read_write_memory_address(&i);
-            use_write_cache = memory::get_memory_seg(target_address).is_cached();
+            use_write_cache = self.write_queue_enabled && memory::get_memory_seg(target_address).is_cached();
             if !use_write_cache && dma_in_progress && !matches!(memory::get_memory_section(target_address),MemorySection::ScratchPad) {
                 return self.op_cycles;
             }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use winit::keyboard::KeyCode;
@@ -407,28 +408,67 @@ impl Default for AudioConfig {
         }
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MemoryConfig {
+    pub cpu_write_queue_enabled: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogConfig {
+    pub log_file: Option<PathBuf>,
+    pub log_severity: String,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            log_file: None,
+            log_severity: "info".to_string(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Config {
+    #[serde(skip)]
+    pub file_config: Option<PathBuf>,
+    pub disc_path: Option<String>,
     pub bios_path: Option<String>,
     pub region_policy: RegionPolicyConfig,
     pub controllers: ControllersConfig,
     pub audio_config: AudioConfig,
+    pub tty_enabled: bool,
+    pub debugger_enabled: bool,
+    pub memory_config: MemoryConfig,
+    pub log_config: LogConfig,
 }
 
 impl Config {
-    pub fn load_or_default(path: &str) -> Self {
+    pub fn load_or_default(path: &PathBuf) -> Self {
         std::fs::read_to_string(path)
             .ok()
-            .and_then(|text| serde_yaml::from_str(&text).ok()).unwrap_or_else(|| {
-            error!("Config file not found or an error occurred during deserialization. Using default values.");
-            Config::default()
-        })
+            .and_then(|text| {
+                let config = serde_yaml::from_str(&text).ok();
+                config.map(|mut config : Config| {
+                    config.file_config = Some(path.clone());
+                    config
+                })
+            }).unwrap_or_else(|| {
+                error!("Config file not found or an error occurred during deserialization. Using default values.");
+                Config::default()
+            })
     }
 
-    pub fn save(&self, path: &str) {
-        if let Ok(text) = serde_yaml::to_string(self) {
-            let _ = std::fs::write(path, text);
+    pub fn save(&self, path: &PathBuf) -> Result<(), String> {
+        match serde_yaml::to_string(self) {
+            Ok(text) => {
+                match std::fs::write(path, text) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("Error writing to file: {}", e)),
+                }
+            }
+            Err(e) => {
+                Err(format!("Error serializing configuration to file: {}", e))
+            }
         }
     }
 }

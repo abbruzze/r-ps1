@@ -14,6 +14,7 @@ pub struct CpalAudioDevice {
 
 impl CpalAudioDevice {
     pub fn new(buffer_capacity_in_millis:usize) -> Self {
+        info!("Audio device set with {buffer_capacity_in_millis} ms buffer");
         let buffer_capacity = 2 * buffer_capacity_in_millis * 44100 / 1000;
         let dev = CpalAudioDevice {
             stream: None,

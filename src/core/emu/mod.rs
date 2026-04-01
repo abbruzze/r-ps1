@@ -1,7 +1,9 @@
+use crate::audio::cpal::CpalAudioDevice;
 use crate::audio::{AudioDevice, AudioSample};
 use crate::core::cdrom::{CDOperation, CDRom, Region};
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
+use crate::core::config::{Config, RegionPolicyConfig};
 use crate::core::cpu::{disassembler, Cpu};
 use crate::core::debugger;
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
@@ -11,7 +13,7 @@ use crate::core::gpu::{VideoMode, GPU};
 use crate::core::interrupt::IrqHandler;
 use crate::core::mdec::{MDec, MDecIn, MDecOut};
 use crate::core::memory::bus::Bus;
-use crate::core::memory::{ArrayMemory, Memory, ReadMemoryAccess};
+use crate::core::memory::{ArrayMemory, Memory, ReadMemoryAccess, BIOS_LEN};
 use crate::core::spu::{AdpcmInterpolation, Spu};
 use crate::log::Logger;
 use crate::renderer::{GUIEvent, Renderer};
@@ -25,8 +27,6 @@ use std::time::{Duration, Instant};
 use std::{fs, io, thread};
 use thread::spawn;
 use tracing::{error, info, warn};
-use crate::audio::cpal::CpalAudioDevice;
-
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
@@ -94,12 +94,18 @@ pub struct Emulator {
     dma_in_progress:bool,
     perf: Perf,
     last_cd_op: CDOperation,
+    config:Config,
 }
 
 impl Emulator {
-    pub fn new(bios:ArrayMemory,logger: Logger,renderer:Box<dyn Renderer>,gui_event_rx: Receiver<GUIEvent>) -> Self {
+    pub fn new(config:Config,logger: Logger,renderer:Box<dyn Renderer>,gui_event_rx: Receiver<GUIEvent>) -> Self {
+        info!("Loading bios ...");
+
+        let bios = ArrayMemory::load_from_file(config.bios_path.as_deref().unwrap(),BIOS_LEN,true,0,0).unwrap();
+        info!("Bios MD5: {}",bios.md5);
+
         info!("Building emulator ...");
-        let cpu = Cpu::new();
+        let cpu = Cpu::new(&config);
 
         let mdec = Rc::new(RefCell::new(MDec::new()));
         let mdec_in = Rc::new(RefCell::new(MDecIn::new(&mdec)));
@@ -143,12 +149,13 @@ impl Emulator {
             dma_in_progress: false,
             perf: Perf::new(Duration::from_millis(4000)),
             last_cd_op: CDOperation::Idle,
+            config,
         };
 
         emu
     }
 
-    fn load_exe(&self,file_name:&String) -> Result<Vec<u8>,String> {
+    fn load_exe(&self,file_name:&str) -> Result<Vec<u8>,String> {
         match fs::read(file_name) {
             Ok(exe) => {
                 let magic = &exe[0..8];
@@ -163,12 +170,64 @@ impl Emulator {
         }
     }
 
-    fn load_pre_exe(&self,file_name:&String) -> io::Result<Vec<u8>> {
-        fs::read(file_name)
+    fn load_disc(&mut self) {
+        let load_exe_pending = self.config.disc_path.as_deref().unwrap_or("").to_uppercase().ends_with("EXE");
+
+        if load_exe_pending {
+            let exe_path = self.config.disc_path.as_deref().unwrap();
+
+            info!("Loading exe '{}', waiting CPU to reach loading point ...",exe_path);
+
+            while self.cpu.get_pc() != 0x80030000 {
+                self.cpu.execute_next_instruction(&mut self.bus,false);
+            }
+
+            match self.load_exe(exe_path) {
+                Ok(exe) => {
+                    info!("Loading EXE file {} ...",exe_path);
+                    self.bus.load_exe(exe,&mut self.cpu);
+                }
+                Err(error) => {
+                    error!("Error while loading EXE file {} : {}",exe_path,error);
+                }
+            }
+        }
+        else if let Some(disc_path) = self.config.disc_path.as_deref() {
+            info!("Loading disc '{}' ...",disc_path);
+            match crate::core::cdrom::disc::Disc::new(&String::from(disc_path)) {
+                Ok(disc) => {
+                    let region = match self.config.region_policy {
+                        RegionPolicyConfig::Auto => {
+                            if disc.get_region().is_none() {
+                                warn!("Cannot found region on disc {}, default to USA",disc.get_cue_file_name());
+                            }
+                            disc.get_region().unwrap_or(Region::USA)
+                        },
+                        RegionPolicyConfig::Usa => Region::USA,
+                        RegionPolicyConfig::Japan => Region::Japan,
+                        RegionPolicyConfig::Europe => Region::Europe,
+                    };
+
+                    let (clock_config,video_mode) = match region {
+                        Region::USA | Region::Japan => (ClockConfig::NTSC,VideoMode::Ntsc),
+                        Region::Europe => (ClockConfig::PAL,VideoMode::Pal),
+                    };
+                    info!("Setting region to {:?} and clock to {:?}",region,clock_config);
+                    self.bus.get_clock_mut().set_clock_config(clock_config);
+                    self.gpu.borrow_mut().get_renderer_mut().set_region(region);
+                    self.gpu.borrow_mut().set_video_mode(video_mode);
+
+                    self.cdrom.borrow_mut().insert_disk(disc);
+                }
+                Err(e) => {
+                    error!("Error while loading disc: {:?}",e);
+                }
+            }
+        }
     }
 
     pub fn emulate(&mut self) {
-        self.cpu.set_bios_tty_capture_enabled(true);
+        self.cpu.set_bios_tty_capture_enabled(self.config.tty_enabled);
 
         // send first hblank event
         self.gpu.borrow_mut().send_first_hblank_event(self.bus.get_clock_mut());
@@ -176,87 +235,38 @@ impl Emulator {
         let (loop_tx_cmd, debugger_rx_cmd) = mpsc::channel::<DebuggerResponse>();
         let (debugger_tx_cmd, loop_rx_cmd) = mpsc::channel::<DebuggerCommand>();
 
-        let mut debugger = debugger::Debugger::new(debugger_rx_cmd,debugger_tx_cmd);
-        info!("Launching debugger ..");
-        spawn(move || {
-            debugger.execute();
-        });
+        if self.config.debugger_enabled {
+            let mut debugger = debugger::Debugger::new(debugger_rx_cmd, debugger_tx_cmd);
+            info!("Launching debugger ..");
+            spawn(move || debugger.execute() );
+        }
 
-        match self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\memcard1.mcd")) {
-            Ok(_) => info!("Memory Card loaded"),
-            Err(e) => error!("Memory card error: {:?}",e),
+        // controllers & memory cards
+        self.bus.get_sio0_mut().get_controller_mut(0).set_connected(self.config.controllers.controller_1.controller_enabled);
+        self.bus.get_sio0_mut().get_controller_mut(1).set_connected(self.config.controllers.controller_2.controller_enabled);
+        if let Some(card_path) = self.config.controllers.controller_1.memory_card_path.as_deref() {
+            self.bus.get_sio0_mut().get_controller_mut(0).get_memory_card_mut().set_file_name(String::from(card_path)).unwrap_or_else(|e| error!("Cannot read memory card '{card_path}' for controller 1: {:?}",e));
+        }
+        if let Some(card_path) = self.config.controllers.controller_2.memory_card_path.as_deref() {
+            self.bus.get_sio0_mut().get_controller_mut(1).get_memory_card_mut().set_file_name(String::from(card_path)).unwrap_or_else(|e| error!("Cannot read memory card '{card_path}' for controller 2: {:?}",e));
         }
 
         let mut irq_handler = IrqHandler::new();
 
-        const LOAD_EXE_PENDING: bool = false;
-        let exe_path = String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\movie-24bit.exe");
-        let exe_pre_files: Vec<(String,u32)> = vec![
-            //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\demo\\SECOND.DAT"),0x80090000u32),
-            //(String::from("C:\\Users\\ealeame\\OneDrive - Ericsson\\Desktop\\ps1\\1"),0x80180000u32),
-        ];
+        self.load_disc();
 
         self.just_entered_in_step_mode = false;
         self.run_mode = RunMode::FreeMode;
 
-        if LOAD_EXE_PENDING {
-            info!("Waiting to reach EXE loading point ...");
-
-            while self.cpu.get_pc() != 0x80030000 {
-                self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress) as u64;
-            }
-
-            for (exe_pre_file,exe_pre_address) in exe_pre_files.iter() {
-                match self.load_pre_exe(exe_pre_file) {
-                    Ok(bin) => {
-                        info!("Loading pre-exe file {exe_pre_file} at address {:04X}",exe_pre_address);
-                        self.bus.load_pre_exe(bin,*exe_pre_address);
-                    }
-                    Err(e) => {
-                        error!("Error loading pre-exe file {exe_pre_file}: {:?}",e)
-                    }
-                }
-            }
-
-            match self.load_exe(&exe_path) {
-                Ok(exe) => {
-                    info!("Loading EXE file {} ...",exe_path);
-                    self.bus.load_exe(exe,&mut self.cpu);
-                }
-                Err(error) => {
-                    error!("Error while loading EXE file {} : {}",exe_path,error);
-                    exit(1);
-                }
-            }
-        }
-        else {
-            let disc = crate::core::cdrom::disc::Disc::new(&String::from("C:\\Users\\ealeame\\Downloads\\doom\\Doom.cue")).unwrap();
-            match &disc.get_region() {
-                Some(region) => {
-                    let (clock_config,video_mode) = match region {
-                        Region::USA | Region::Japan => (ClockConfig::NTSC,VideoMode::Ntsc),
-                        Region::Europe => (ClockConfig::PAL,VideoMode::Pal),
-                    };
-                    info!("Setting region to {:?} and clock to {:?}",region,clock_config);
-                    self.bus.get_clock_mut().set_clock_config(clock_config);
-                    self.gpu.borrow_mut().get_renderer_mut().set_region(*region);
-                    self.gpu.borrow_mut().set_video_mode(video_mode);
-                }
-                None => {
-                    warn!("Cannot found region on disc {}, default to NTSC",disc.get_cue_file_name());
-                }
-            }
-
-            self.cdrom.borrow_mut().insert_disk(disc);
-        }
-
         // starting audio device
-        let mut audio_cpal = CpalAudioDevice::new(60);
+        let mut audio_cpal = CpalAudioDevice::new(self.config.audio_config.buffer_capacity_in_millis);
         if let Ok(()) = audio_cpal.start() {
             self.audio_device = Some(Box::new(audio_cpal));
         }
         // schedule first audio event
         self.bus.get_clock_mut().schedule_audio_sample();
+
+        let debugger_enabled = self.config.debugger_enabled;
 
         'main_loop: loop {
             if self.just_entered_in_step_mode {
@@ -265,7 +275,8 @@ impl Emulator {
             }
 
             while !self.bus.get_clock().has_ready_event() {
-                let (send_step,skip_execution) = self.debug(&loop_rx_cmd,&loop_tx_cmd);
+                let (send_step,skip_execution) = if debugger_enabled { self.debug(&loop_rx_cmd,&loop_tx_cmd) } else { (false,false) };
+
                 if skip_execution {
                     continue 'main_loop;
                 }

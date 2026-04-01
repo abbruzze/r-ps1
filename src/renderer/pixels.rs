@@ -66,8 +66,9 @@ pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
     let (gui_event_tx, gui_event_rx) = mpsc::channel::<GUIEvent>();
     let usb_event_tx = gui_event_tx.clone();
     let usb_config = config.clone();
+    let emu_config = config.clone();
 
-    thread::spawn(move || start(GPUPixelsRenderer::new(proxy),gui_event_rx));
+    thread::spawn(move || start(GPUPixelsRenderer::new(proxy),gui_event_rx,emu_config));
     thread::spawn(move || usb_controller_loop(usb_config,usb_event_tx));
 
     // start gui
