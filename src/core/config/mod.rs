@@ -373,6 +373,7 @@ pub struct ControllersConfig {
     pub controller_2: ControllerConfig,
     pub save_writings_to_disk: bool,
     pub auto_discover_usb_controllers: bool,
+    pub usb_direction_resolution: f32,
 }
 
 impl Default for ControllersConfig {
@@ -392,6 +393,7 @@ impl Default for ControllersConfig {
             },
             save_writings_to_disk: true,
             auto_discover_usb_controllers: true,
+            usb_direction_resolution: 0.1,
         }
     }
 }
@@ -404,7 +406,7 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            buffer_capacity_in_millis: 50,
+            buffer_capacity_in_millis: 10,
         }
     }
 }
@@ -426,6 +428,10 @@ impl Default for LogConfig {
         }
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GPUConfig {
+    pub command_delay_enabled: bool,
+} 
 
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Config {
@@ -440,6 +446,7 @@ pub struct Config {
     pub debugger_enabled: bool,
     pub memory_config: MemoryConfig,
     pub log_config: LogConfig,
+    pub gpu_config: GPUConfig,
 }
 
 impl Config {

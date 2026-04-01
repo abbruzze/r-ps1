@@ -110,7 +110,7 @@ impl Emulator {
         let mdec = Rc::new(RefCell::new(MDec::new()));
         let mdec_in = Rc::new(RefCell::new(MDecIn::new(&mdec)));
         let mdec_out = Rc::new(RefCell::new(MDecOut::new(&mdec)));
-        let gpu = Rc::new(RefCell::new(GPU::new(renderer)));
+        let gpu = Rc::new(RefCell::new(GPU::new(&config,renderer)));
         let cdrom = Rc::new(RefCell::new(CDRom::new()));
         let spu = Rc::new(RefCell::new(Spu::new(AdpcmInterpolation::default())));
         let pio = Rc::new(RefCell::new(DummyDMAChannel {}));

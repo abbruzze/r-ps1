@@ -5,16 +5,15 @@ mod draw_rectangle;
 mod draw_polygon;
 mod timings;
 
-use std::cmp;
 use crate::core::clock::Clock;
 use crate::core::clock::EventType;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::renderer::{GPUFrameBuffer, Renderer};
+use std::cmp;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use crate::core::config::Config;
 /*
 GPU Versions
 Summary of GPU Differences
@@ -53,8 +52,6 @@ const fn generate_rgb5_to_rgb8_table() -> [u8; 32] {
 }
 
 static RGB5_TO_RGB8: [u8; 32] = generate_rgb5_to_rgb8_table();
-
-pub const GPU_VERSION : u32 = 0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Color {
@@ -578,7 +575,6 @@ impl CommandFifo {
 struct Raster {
     total_lines: usize,
     total_cycles: usize,
-    cycles: usize,
     v_blank: bool,
     h_blank: bool,
     raster_line: usize,
@@ -598,7 +594,7 @@ struct VRamCopyConfig {
 
 impl VRamCopyConfig {
     fn next(&self) -> Option<VRamCopyConfig> {
-        let mut counter_x = self.counter_x.wrapping_add(1); // each step processes 2 halfword
+        let mut counter_x = self.counter_x.wrapping_add(1);
         let mut counter_y = self.counter_y;
         let mut finished = false;
         if counter_x >= self.width {
@@ -669,37 +665,6 @@ impl Vertex {
     }
 }
 
-#[derive(Debug,Copy,Clone)]
-struct Perf {
-    count: u32,
-    acc: u32,
-    last_cpu_perf: f32,
-    duration: Duration,
-    timestamp: Instant,
-}
-
-impl Perf {
-    fn new(duration: Duration) -> Self {
-        Self { count: 0, acc: 0, last_cpu_perf: 0.0, duration, timestamp: Instant::now() }
-    }
-    fn update(&mut self,cpu_perf:u16) {
-        self.count += 1;
-        self.acc += cpu_perf as u32;
-
-        if self.timestamp.elapsed() >= self.duration {
-            self.last_cpu_perf = self.acc as f32 / self.count as f32;
-            self.acc = 0;
-            self.count = 0;
-            self.timestamp = Instant::now();
-        }
-
-    }
-
-    fn get(&self) -> f32 {
-        self.last_cpu_perf
-    }
-}
-
 pub struct GPU {
     renderer: Box<dyn Renderer>,
     vram: Vec<u8>, // little endian format
@@ -725,12 +690,13 @@ pub struct GPU {
     gpu_read_register: u32,
     gp0state: Gp0State,
     show_whole_vram: bool,
-    last_cpu_perf: Perf,
+    last_cpu_perf: u16,
     cpu_vram_copy_buffer: Vec<u16>,
+    command_delay_enabled: bool,
 }
 
 impl GPU {
-    pub fn new(renderer:Box<dyn Renderer>) -> Self {
+    pub fn new(config:&Config,renderer:Box<dyn Renderer>) -> Self {
         let mut gpu = GPU {
             renderer,
             vram: vec![0;1024 * 512 * 2],//.into_boxed_slice(),
@@ -752,8 +718,9 @@ impl GPU {
             gpu_read_register: 0,
             gp0state: Gp0State::WaitingCommand,
             show_whole_vram: false,
-            last_cpu_perf: Perf::new(Duration::from_millis(1000)),
+            last_cpu_perf: 0,
             cpu_vram_copy_buffer: Vec::new(),
+            command_delay_enabled: config.gpu_config.command_delay_enabled,
         };
 
         gpu.display_config.horizontal_start = 0x260 + 0;
@@ -1033,7 +1000,7 @@ impl GPU {
             }
         }
 
-        self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height,self.show_whole_vram),self.last_cpu_perf.get() as u8);
+        self.renderer.render_frame(GPUFrameBuffer::new(Arc::new(frame_buffer),crt_width,crt_height,frame_width,frame_height,self.show_whole_vram),self.last_cpu_perf);
     }
 
     pub fn command_completed(&mut self,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
@@ -1047,7 +1014,7 @@ impl GPU {
     }
 
     pub fn set_last_cpu_perf(&mut self,last_cpu_perf:u16) {
-        self.last_cpu_perf.update(last_cpu_perf);
+        self.last_cpu_perf = last_cpu_perf;
     }
 }
 

@@ -32,7 +32,7 @@ impl GPUPixelsRenderer {
 }
 
 impl Renderer for GPUPixelsRenderer {
-    fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8) {
+    fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u16) {
         let _ = self.event_proxy.send_event(PS1Event::NewFrame(frame, last_performance));
     }
     fn set_warp_mode(&mut self,enabled:bool) {
@@ -69,11 +69,62 @@ pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
     let emu_config = config.clone();
 
     thread::spawn(move || start(GPUPixelsRenderer::new(proxy),gui_event_rx,emu_config));
-    thread::spawn(move || usb_controller_loop(usb_config,usb_event_tx));
+    if config.controllers.controller_1.attach_to_usb || config.controllers.controller_2.attach_to_usb {
+        thread::spawn(move || usb_controller_loop(usb_config, usb_event_tx));
+    }
+    else {
+        info!("USB controller loop disabled");
+    }
 
     // start gui
     let mut gui = PixelsRenderer::new(DEFAULT_SCALE, gui_event_tx, config);
     event_loop.run_app(&mut gui).unwrap();
+}
+
+struct USBDirections {
+    left: bool,
+    right: bool,
+    up: bool,
+    down: bool,
+    resolution: f32,
+}
+
+impl USBDirections {
+    pub fn new(resolution:f32) -> Self {
+        Self {
+            left: false,
+            right: false,
+            up: false,
+            down: false,
+            resolution,
+        }
+    }
+    pub fn left_right_changed(&mut self,value:f32,gui_event_tx:&mpsc::Sender<GUIEvent>,controller_id:usize) {
+        let left = value <= -self.resolution;
+        let right = value >= self.resolution;
+
+        if self.left != left {
+            self.left = left;
+            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Left, left));
+        }
+        if self.right != right {
+            self.right = right;
+            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Right, right));
+        }
+    }
+    pub fn up_down_changed(&mut self,value:f32,gui_event_tx:&mpsc::Sender<GUIEvent>,controller_id:usize) {
+        let down = value <= -self.resolution;
+        let up = value >= self.resolution;
+
+        if self.up != up {
+            self.up = up;
+            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Up, up));
+        }
+        if self.down != down {
+            self.down = down;
+            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Down, down));
+        }
+    }
 }
 
 fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
@@ -97,13 +148,12 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
         (gilrs::Button::RightTrigger,ControllerButton::R1),
         (gilrs::Button::RightTrigger2,ControllerButton::R2),
         (gilrs::Button::Start,ControllerButton::Start),
+        (gilrs::Button::Select,ControllerButton::Select),
     ]);
 
-    let axis_resolution = 0.5f32;
+    let mut directions = USBDirections::new(config.controllers.usb_direction_resolution);
 
     info!("Starting USB controller loop ...");
-    let mut last_x_button : Option<ControllerButton> = None;
-    let mut last_y_button : Option<ControllerButton> = None;
 
     let dpad_2_axis_button = |button:gilrs::Button| {
         match button {
@@ -116,16 +166,18 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
     };
 
     let mut controller_ids = [-1,-1];
+    let c1_usb_enabled = config.controllers.controller_1.attach_to_usb;
+    let c2_usb_enabled = config.controllers.controller_2.attach_to_usb;
 
     loop {
         while let Some(Event { id, event, time, .. }) = gilrs.next_event_blocking(Some(std::time::Duration::from_secs(1))) {
             debug!("{:?} New event from {}: {:?}", time, id, event);
             let id : usize = id.into();
-            if controller_ids[0] == -1 && controller_ids[1] != id as i32 {
+            if controller_ids[0] == -1 && c1_usb_enabled && controller_ids[1] != id as i32 {
                 controller_ids[0] = id as i32;
                 info!("Controller #0 assigned to gamepad #{id}");
             }
-            else if controller_ids[1] == -1 && controller_ids[0] != id as i32 {
+            else if controller_ids[1] == -1 && c2_usb_enabled && controller_ids[0] != id as i32 {
                 controller_ids[1] = id as i32;
                 info!("Controller #1 assigned to gamepad #{id}");
             }
@@ -178,28 +230,10 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
                 EventType::AxisChanged(axis,value,_code) => {
                     match axis {
                         gilrs::Axis::LeftStickX | gilrs::Axis::RightStickX=> {
-                            if value > -axis_resolution && value < axis_resolution {
-                                if let Some(button) = last_x_button.take() {
-                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, false));
-                                }
-                            }
-                            else {
-                                let button = if value < -axis_resolution { ControllerButton::Left } else { ControllerButton::Right };
-                                let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, true));
-                                last_x_button = Some(button);
-                            }
+                            directions.left_right_changed(value,&gui_event_tx,controller_id);
                         }
                         gilrs::Axis::LeftStickY | gilrs::Axis::RightStickY=> {
-                            if value > -axis_resolution && value < axis_resolution {
-                                if let Some(button) = last_y_button.take() {
-                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, false));
-                                }
-                            }
-                            else {
-                                let button = if value < -axis_resolution { ControllerButton::Down } else { ControllerButton::Up };
-                                let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, true));
-                                last_y_button = Some(button);
-                            }
+                           directions.up_down_changed(value,&gui_event_tx,controller_id);
                         }
                         _ => {}
                     }
@@ -227,7 +261,7 @@ struct PixelsRenderer {
     audio_muted:bool,
     paused: bool,
     debug_mode: bool,
-    last_performance: u8,
+    last_performance: u16,
     last_cd_access: Option<CDOperation>,
     region: Region,
     pending_region_change: Option<Region>,
@@ -306,7 +340,7 @@ impl PixelsRenderer {
         }
     }
 
-    fn new_frame(&mut self, frame: &GPUFrameBuffer,last_performance:u8) {
+    fn new_frame(&mut self, frame: &GPUFrameBuffer,last_performance:u16) {
         self.last_performance = last_performance;
         if let Some(pixels) = &mut self.pixels {
             self.visible_width = frame.visible_width;

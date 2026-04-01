@@ -7,7 +7,7 @@ use crate::core::controllers::ControllerButton;
 
 #[derive(Debug, Clone)]
 pub enum PS1Event {
-    NewFrame(GPUFrameBuffer,u8),
+    NewFrame(GPUFrameBuffer,u16),
     WarpMode(bool),
     Paused(bool),
     CDROMAccess(CDOperation),
@@ -50,7 +50,7 @@ impl GPUFrameBuffer {
 pub type EmuStarter<R> = fn(R,mpsc::Receiver<GUIEvent>,Config);
 
 pub trait Renderer {
-    fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u8);
+    fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u16);
     fn set_warp_mode(&mut self,enabled:bool);
     fn set_paused(&mut self,paused:bool);
     fn set_last_cd_access(&mut self,access:CDOperation);

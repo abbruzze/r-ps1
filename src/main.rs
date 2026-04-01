@@ -81,14 +81,7 @@ fn main() {
             Config::default()
         }
     };
-    
-    if config.file_config.is_none() {
-        let config_file = emu_dir.join(DEFAULT_CONFIG_FILE_NAME);
-        match config.save(&config_file) {
-            Ok(_) => println!("Config file saved to '{}'",config_file.display()),
-            Err(e) => println!("Error saving config file: {}",e),
-        }
-    }
+
     // bios
     if args.bios.is_none() && config.bios_path.is_none() {
         println!("No bios file specified");
@@ -130,6 +123,14 @@ fn main() {
     }
     if let Some(log_file) = args.log_file {
         config.log_config.log_file = Some(log_file);
+    }
+
+    if config.file_config.is_none() {
+        let config_file = emu_dir.join(DEFAULT_CONFIG_FILE_NAME);
+        match config.save(&config_file) {
+            Ok(_) => println!("Config file saved to '{}'",config_file.display()),
+            Err(e) => println!("Error saving config file: {}",e),
+        }
     }
     
     renderer::pixels::run_loop(|renderer, gui_event_rx, config| {
