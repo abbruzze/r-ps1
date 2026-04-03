@@ -303,10 +303,10 @@ impl PixelsRenderer {
                     Some(access) => {
                         match access {
                             CDOperation::Reading(time) => {
-                                format!("[CD R {:02}:{:02}:{:02}]",time.m(),time.s(),time.f())
+                                format!("[CD R {:02}:{:02}]",time.m(),time.s())
                             },
                             CDOperation::Playing(time) => {
-                                format!("[CD P {:02}:{:02}:{:02}]",time.m(),time.s(),time.f())
+                                format!("[CD P {:02}:{:02}]",time.m(),time.s())
                             }
                             CDOperation::Idle => {
                                 String::from("")
