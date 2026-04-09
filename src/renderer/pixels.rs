@@ -5,9 +5,12 @@ use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
+use fast_image_resize::images::Image;
+use fast_image_resize::{PixelType, ResizeOptions, Resizer, IntoImageView, ResizeAlg, FilterType};
 use gilrs::{Event, EventType, Gilrs};
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -17,6 +20,7 @@ use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
 
 const DEFAULT_WIDTH: usize = 640;
+const DEFAULT_HEIGHT: usize = 480;
 const DEFAULT_SCALE: usize = 1;
 
 const FPS_PERIOD : f64 = 2.0;
@@ -265,15 +269,19 @@ struct PixelsRenderer {
     last_cd_access: Option<CDOperation>,
     region: Region,
     pending_region_change: Option<Region>,
+    image_resizer: Resizer,
+    image_resizer_options: ResizeOptions,
+    resize_adjust_pending: bool,
+    last_window_size: Option<PhysicalSize<u32>>,
 }
 
 impl PixelsRenderer {
     pub fn new(scale: usize,gui_event_tx: mpsc::Sender<GUIEvent>,config: Config) -> Self {
-        Self {
+        let renderer = Self {
             window: None,
             pixels: None,
             width : DEFAULT_WIDTH,
-            height : Region::USA.get_crt_total_lines() * 2,
+            height : DEFAULT_HEIGHT,
             visible_width: 0,
             visible_height: 0,
             scale,
@@ -290,7 +298,48 @@ impl PixelsRenderer {
             last_cd_access: None,
             region: Region::USA,
             pending_region_change: None,
+            image_resizer: Resizer::new(),
+            image_resizer_options: ResizeOptions::new(),
+            resize_adjust_pending: false,
+            last_window_size: None,
+        };
+
+        if let Some(renderer_type) = renderer.config.gpu_config.rendering_type.as_ref() {
+            match renderer_type.to_uppercase().as_str() {
+                "NEAREST" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
+                }
+                "BOX" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Box));
+                }
+                "BILINEAR" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+                }
+                "HAMMING" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
+                }
+                "BICUBIC" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
+                }
+                "MITCHELL" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Mitchell));
+                }
+                "GAUSSIAN" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Gaussian));
+                }
+                "LANCZOS3" => {
+                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
+                }
+                _ => {
+                    error!("Unrecognized rendering type: {}",renderer_type);
+                }
+            }
         }
+        else {
+            renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
+        }
+
+        renderer
     }
 
     fn update_fps(&mut self,update_now:bool) {
@@ -340,40 +389,84 @@ impl PixelsRenderer {
         }
     }
 
+    fn get_adjusted_image_size_4_3(window_size:PhysicalSize<u32>) -> (u32, u32) {
+        let window_aspect = window_size.width as f32 / window_size.height as f32;
+        let target_aspect = 4.0 / 3.0;
+
+        if window_aspect > target_aspect {
+            // bande laterali
+            let h = window_size.height;
+            let w = (h as f32 * target_aspect) as u32;
+            (w, h)
+        } else {
+            // bande sopra/sotto
+            let w = window_size.width;
+            let h = (w as f32 / target_aspect) as u32;
+            (w, h)
+        }
+    }
+
     fn new_frame(&mut self, frame: &GPUFrameBuffer,last_performance:u16) {
         self.last_performance = last_performance;
         if let Some(pixels) = &mut self.pixels {
             self.visible_width = frame.visible_width;
             self.visible_height = frame.visible_height;
-            if frame.crt_width != self.width || frame.crt_height != self.height || self.pending_region_change.is_some() {
-                let mut region_changed = false;
+
+            if frame.crt_width != self.width || frame.crt_height != self.height || self.pending_region_change.is_some() || self.resize_adjust_pending {
+                self.resize_adjust_pending = false;
+
                 if let Some(region) = self.pending_region_change.take() && self.region != region {
                     info!("Region set to {:?}",region);
                     self.region = region;
-                    region_changed = true;
                 }
                 info!("PixelsRenderer: Frame size changed from {}x{} to {}x{}", self.width, self.height, frame.visible_width, frame.visible_height);
                 self.width = frame.crt_width;
                 self.height = frame.crt_height;
-                if self.debug_mode != frame.debug_frame || region_changed {
+
+                if self.debug_mode != frame.debug_frame {
                     self.debug_mode = frame.debug_frame;
                     let new_size = if frame.debug_frame {
-                        winit::dpi::PhysicalSize::new(self.width as u32, self.height as u32)
+                        self.last_window_size = Some(self.window.unwrap().inner_size());
+                        PhysicalSize::new(self.width as u32, self.height as u32)
                     }
                     else {
-                        winit::dpi::PhysicalSize::new(DEFAULT_WIDTH as u32, (self.region.get_crt_total_lines() * 2) as u32)
+                        self.last_window_size.unwrap_or(PhysicalSize::new(DEFAULT_WIDTH as u32, DEFAULT_HEIGHT as u32))
                     };
                     let _ = self.window.unwrap().request_inner_size(new_size);
                 }
 
-                if pixels.resize_buffer(self.width as u32, self.height as u32).is_err() {
+                let window_size = self.window.unwrap().inner_size();
+                let (adjusted_width,adjusted_height) = if self.debug_mode {
+                    (window_size.width,window_size.height)
+                } else {
+                    Self::get_adjusted_image_size_4_3(window_size)
+                };
+
+                if pixels.resize_buffer(adjusted_width, adjusted_height).is_err() {
                     println!("Pixels buffer resize error");
                 }
-                let window_size = self.window.unwrap().inner_size();
+
                 pixels.resize_surface(window_size.width, window_size.height).unwrap();
             }
+
+            let image_src = Image::from_vec_u8(self.width as u32, self.height as u32, frame.frame.as_ref().clone(), PixelType::U8x4).unwrap();
+            let window_size = self.window.unwrap().inner_size();
+            let (adjusted_width,adjusted_height) = if self.debug_mode {
+                (window_size.width,window_size.height)
+            } else {
+                Self::get_adjusted_image_size_4_3(window_size)
+            };
+            let mut image_dst = Image::new(adjusted_width, adjusted_height, PixelType::U8x4);
+            self.image_resizer.resize(&image_src,&mut image_dst,&ResizeOptions::new().resize_alg(ResizeAlg::Nearest)).unwrap();
+            let resized_buffer = image_dst.buffer();
+
             let frame_buffer = pixels.frame_mut();
-            frame_buffer.copy_from_slice(&frame.frame);
+            if resized_buffer.len() == frame_buffer.len() {
+                frame_buffer.copy_from_slice(resized_buffer);
+            }
+            else {
+                self.resize_adjust_pending = true;
+            }
 
             if pixels.render().is_err() {
                 println!("Pixels render error");
@@ -400,7 +493,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         // Crea pixels
         let window_size = window_ref.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height,window_ref);
-        let mut builder = PixelsBuilder::new(DEFAULT_WIDTH as u32, (self.region.get_crt_total_lines() * 2) as u32, surface_texture);
+        let mut builder = PixelsBuilder::new(DEFAULT_WIDTH as u32, DEFAULT_HEIGHT as u32, surface_texture);
         builder = builder.request_adapter_options(wgpu::RequestAdapterOptions {
             // 1 - GPU: Pick one or the other
             //power_preference: wgpu::PowerPreference::LowPower,
@@ -454,7 +547,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             WindowEvent::CloseRequested => {
                 let _ = self.gui_event_tx.send(GUIEvent::Shutdown);
             },
-            WindowEvent::Resized(new_size) => {
+            WindowEvent::Resized(mut new_size) => {
                 if let Some(pixels) = &mut self.pixels {
                     if pixels.resize_surface(new_size.width, new_size.height).is_err() {
                         println!("Pixels surface resize error");

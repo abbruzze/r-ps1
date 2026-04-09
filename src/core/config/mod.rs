@@ -431,6 +431,7 @@ impl Default for LogConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GPUConfig {
     pub command_delay_enabled: bool,
+    pub rendering_type: Option<String>,
 } 
 
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]

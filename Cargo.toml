@@ -22,6 +22,7 @@ gilrs = "0.11.1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 clap = { version = "4", features = ["derive"] }
+fast_image_resize = "6.0.0"
 
 [build]
 rustflags = ["-C", "target-cpu=native"]

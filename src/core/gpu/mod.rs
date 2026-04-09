@@ -942,19 +942,17 @@ impl GPU {
             (1024,512)
         }
         else {
-            self.display_config.visible_area()
+            //self.display_config.visible_area()
+            (self.display_config.h_res.0,self.display_config.v_res.total_lines())
         };
 
-        let crt_width = if self.show_whole_vram { 1024 } else { self.display_config.h_res.0 };
+        let visible = self.display_config.visible_area();
+        let crt_width = if self.show_whole_vram { 1024 } else { visible.0 };
         let crt_height = if self.show_whole_vram {
             512
         }
         else {
-            if self.display_config.interlaced {
-                self.display_config.video_mode.total_lines() << 1
-            } else {
-                self.display_config.video_mode.total_lines()
-            }
+            visible.1
         };
 
         let crt_start_x_offset = ((crt_width as u16).saturating_sub(frame_width as u16) >> 1) as usize;
