@@ -1,12 +1,12 @@
 use std::process::exit;
 use tracing::{info, warn};
-use crate::core::cdrom::{CDRom, Command};
-use crate::core::cdrom::commands::INT1;
+use crate::core::cdrom::{CDRom, Command, DriveState};
+use crate::core::cdrom::commands::{INT1, INT4};
 use crate::core::cdrom::disc::BCD;
 use crate::core::interrupt::IrqHandler;
 
 impl CDRom {
-    pub(super) fn read_data_sector(&mut self) -> bool {
+    pub(super) fn read_data_sector(&mut self,irq_handler:&mut IrqHandler) -> bool {
         let sector_size = self.get_sector_size();
         let mut send_int1 = false;
         if let Some(disc) = self.disc.as_mut() {
@@ -38,11 +38,17 @@ impl CDRom {
                 }
                 None => {
                     warn!("CDROM read_data_sector at loc {:?} failed",disc.get_head_position());
-                    exit(1);
                 }
             }
             // go to next sector
-            disc.set_next_sector_head_position();
+            if disc.set_next_sector_head_position() && let Some(current_track) = disc.get_current_track() { // end of track
+                let last_track_number = disc.get_tracks().last().map(|track| track.track_number()).unwrap_or(0);
+                if current_track.track_number() == last_track_number {
+                    info!("Reached end of disc, stopping...");
+                    self.change_drive_state(DriveState::Idle);
+                    self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
+                }
+            }
         }
         send_int1
     }
@@ -92,8 +98,9 @@ impl CDRom {
             // go to next sector
             let end_of_track = disc.set_next_sector_head_position();
             if end_of_track && (self.mode & 0x02) != 0 { // auto-pause on for end of track
-                // TODO
-                info!("End of track ...");
+                info!("End of track with auto-pause set...");
+                self.change_drive_state(DriveState::Idle);
+                self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
             }
         }
         if send_report {

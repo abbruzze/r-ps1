@@ -23,7 +23,7 @@ const fn delay_cycles_44100(cycles:usize) -> usize {
 }
 
 impl CDRom {
-    fn change_drive_state(&mut self, new_state: DriveState) {
+    pub(super) fn change_drive_state(&mut self, new_state: DriveState) {
         //info!("CDROM drive state changed to {:?}",new_state);
         self.drive_state = new_state;
     }
@@ -498,7 +498,7 @@ impl CDRom {
             }
         }
 
-        let send_int1 = self.read_data_sector();
+        let send_int1 = self.read_data_sector(irq_handler);
         let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
         if send_int1 {
             info!("CDROM reading sending INT1");
