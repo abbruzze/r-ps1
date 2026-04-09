@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 use std::{fs, io, thread};
 use thread::spawn;
 use tracing::{error, info, warn};
+use crate::core::bios::PS1_BIOS_SET;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
@@ -102,6 +103,14 @@ impl Emulator {
         info!("Loading bios ...");
 
         let bios = ArrayMemory::load_from_file(config.bios_path.as_deref().unwrap(),BIOS_LEN,true,0,0).unwrap();
+        match PS1_BIOS_SET.get(bios.md5.to_lowercase().as_str()) {
+            Some(bios_info) => {
+                info!("Bios MD5 found. Name: {} region: {:?} release-date: {}",bios_info.redump_name,bios_info.region,bios_info.date);
+            }
+            None => {
+                warn!("Bios MD5 '{}' not found",bios.md5.to_lowercase());
+            }
+        }
         info!("Bios MD5: {}",bios.md5);
 
         info!("Building emulator ...");
