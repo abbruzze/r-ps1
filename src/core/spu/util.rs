@@ -22,9 +22,8 @@ macro_rules! impl_ext_trait {
     };
 }
 
-impl_ext_trait!(U8Ext, u8);
 impl_ext_trait!(U16Ext, u16);
-impl_ext_trait!(U32Ext, u32, sign_bit);
+impl_ext_trait!(U32Ext, u32);
 impl_ext_trait!(I16Ext, i16);
 
 pub(super) trait I32Ext {

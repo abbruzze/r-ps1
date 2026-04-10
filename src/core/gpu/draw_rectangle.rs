@@ -1,4 +1,4 @@
-use tracing::{debug, info};
+use tracing::debug;
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
 use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::IrqHandler;
@@ -129,8 +129,8 @@ impl GPU {
                         }
                     }
                     None => { // non-textured
-                        for y in 0..height {
-                            for x in 0..width {
+                        for _ in 0..height {
+                            for _ in 0..width {
                                 pixels += 1;
                                 if vertex.is_inside_drawing_area(&self.drawing_area) {
                                     self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent,Some(self.semi_transparency));

@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::{fmt, fs};
+use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};

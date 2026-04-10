@@ -3,7 +3,7 @@ use crate::core::cpu::instruction::{Instruction, Opcode};
 use crate::core::memory;
 use crate::core::memory::{Memory, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
 use std::mem;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use crate::core::config::Config;
 use crate::core::memory::bus::Bus;
 
@@ -1538,7 +1538,7 @@ impl Cpu {
         }
     }
 
-    fn op_bcn_ft<const FALSE:bool>(&mut self,_memory:&mut Bus,instr: &Instruction,_use_write_cache:bool) -> OperationException {
+    fn op_bcn_ft<const FALSE:bool>(&mut self,_memory:&mut Bus,_instr: &Instruction,_use_write_cache:bool) -> OperationException {
         todo!{"Implement BCnF/BCnT instructions"}
     }
 

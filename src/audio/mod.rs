@@ -7,14 +7,8 @@ pub struct AudioSample {
 }
 
 impl AudioSample {
-    pub fn new(left: i16, right: i16) -> Self {
-        Self { left, right }
-    }
     pub fn new_lr((left, right): (i16, i16)) -> Self {
         Self {left, right}
-    }
-    pub fn get_sample_lr(&self) -> (i16, i16) {
-        (self.left, self.right)
     }
 }
 

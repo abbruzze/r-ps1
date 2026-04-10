@@ -1,5 +1,5 @@
 use std::cmp;
-use tracing::{debug, info, warn};
+use tracing::debug;
 use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
 use crate::core::gpu::gp0::DITHER_TABLE;
 use crate::core::gpu::timings::GPUTimings;

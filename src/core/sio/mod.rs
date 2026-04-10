@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use crate::core::clock::{Clock, EventType};
 use crate::core::CPU_CLOCK;
 use crate::core::controllers::Controller;
@@ -192,6 +192,7 @@ impl SIO0 {
     fn reschedule(&mut self,clock:&mut Clock) {
         self.tx_idle = false;
 
+        /*
         let factor = match self.mode & 3 {
             0 | 1 => 1,
             2 => 16,
@@ -199,6 +200,7 @@ impl SIO0 {
             _ => unreachable!()
         };
         let cycles = (self.baud * factor) << 4; // * 16 = 2 x 8 bit
+        */
 
         self.start_timer_timestamp = clock.current_time();
         clock.schedule(EventType::SIO0Byte, TX_RX_DATA_CYCLES as u64);

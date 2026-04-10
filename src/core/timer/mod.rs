@@ -1,4 +1,4 @@
-use tracing::{debug, info};
+use tracing::debug;
 use crate::core::clock::{Clock, EventType};
 use crate::core::interrupt::{InterruptType, IrqHandler};
 
@@ -115,10 +115,6 @@ impl TimerClockSource {
         }
     }
 }
-
-// in one-shot mode, delay IRQ for this many cycles after reaching target
-const ONE_SHOT_IRQ_CYCLE_DELAY: usize = 4;
-const COUNTER_PAUSE_CYCLES: usize = 3;
 
 /*
 Counter Mode:

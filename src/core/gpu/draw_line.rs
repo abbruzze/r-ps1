@@ -1,4 +1,4 @@
-use tracing::{debug, info};
+use tracing::debug;
 use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
 use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::IrqHandler;

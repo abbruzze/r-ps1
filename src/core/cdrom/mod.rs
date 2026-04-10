@@ -558,10 +558,10 @@ impl CDRom {
         self.pending_cd_to_spu_volume[0][1] = value;
     }
 
-    fn write_data(&mut self, value: u8) {
+    fn write_data(&mut self, _value: u8) {
         info!("CDROM write data");
     }
-    fn write_ci(&mut self, value: u8) {
+    fn write_ci(&mut self, _value: u8) {
         info!("CDROM write ci");
     }
 

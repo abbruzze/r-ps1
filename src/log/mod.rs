@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use tracing_subscriber;
-use tracing_subscriber::{fmt, reload, EnvFilter, FmtSubscriber, Registry};
+use tracing_subscriber::{fmt, reload, EnvFilter, Registry};
 use tracing_subscriber::prelude::*;
 
 pub struct Logger {

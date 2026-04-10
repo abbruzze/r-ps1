@@ -2,7 +2,7 @@ use crate::core::cpu::cop0::Cop0;
 use crate::core::cpu::Cpu;
 use crate::core::dma::DMAController;
 use crate::core::gpu::GPU;
-use crate::core::interrupt::{InterruptController, InterruptType, IrqHandler};
+use crate::core::interrupt::{InterruptController, IrqHandler};
 use crate::core::memory::get_memory_map;
 use crate::core::memory::{ArrayMemory, MemoryMap, MemorySection, MemorySegment};
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
@@ -493,7 +493,7 @@ impl Bus {
                     };
                 },
                 I_MASK => {
-                    self.io_mem_bridge.read[fun_offset] = |bus,_address,size| {
+                    self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| {
                         ReadMemoryAccess::Read(bus.interrupt.mask as u32,IO_REG_ACCESS_CYCLES)
                     };
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| { Some(bus.interrupt.mask as u32) };
@@ -662,7 +662,7 @@ impl Bus {
                 0x1F801044 => {
                     self.io_mem_bridge.read[fun_offset] = |bus,_address,_size| ReadMemoryAccess::Read(bus.sio0.read_status(&bus.clock), IO_REG_ACCESS_CYCLES);
                     self.io_mem_bridge.peek[fun_offset] = |bus,_address| Some(bus.sio0.read_status(&bus.clock));
-                    self.io_mem_bridge.write[fun_offset] = |bus,_address,_value,_size| WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES); // read-only
+                    self.io_mem_bridge.write[fun_offset] = |_bus,_address,_value,_size| WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES); // read-only
                 }
                 // JOY MODE
                 0x1F801048 => {

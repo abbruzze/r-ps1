@@ -256,7 +256,7 @@ impl DmaDevice for Spu {
         true
     }
 
-    fn dma_write(&mut self, word: u32, clock: &mut Clock, irq_handler: &mut IrqHandler) {
+    fn dma_write(&mut self, word: u32, _clock: &mut Clock, _irq_handler: &mut IrqHandler) {
         self.write_data_port(word as u16);
         self.write_data_port((word >> 16) as u16);
     }

@@ -1,6 +1,5 @@
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
-use std::process::exit;
 
 // Tipo di evento
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

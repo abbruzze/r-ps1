@@ -1,4 +1,4 @@
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use crate::core::interrupt::IrqHandler;
 use super::{DMADirection, DisplayDepth, Gp0State, VideoHorizontalResolution, VideoMode, VideoVerticalResolution, GPU};
 

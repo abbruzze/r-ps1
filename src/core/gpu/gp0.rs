@@ -1,7 +1,7 @@
 use super::{Color, GP0Operation, Gp0State, SemiTransparency, TextureDepth, VRamCopyConfig, Vertex, GPU};
 use crate::core::clock::{Clock, EventType};
 use crate::core::interrupt::{InterruptType, IrqHandler};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 use crate::core::gpu::timings::GPUTimings;
 
 pub(super) const DITHER_TABLE: &[[i8; 4]; 4] = &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
@@ -128,7 +128,7 @@ impl GPU {
                     }
                 }
             }
-            Gp0State::VRamCopy(operation, config) => {
+            Gp0State::VRamCopy(operation, _config) => {
                 debug!("GPU GP0\tdata {:08X}",cmd);
                 operation(self, cmd,interrupt_handler);
             }

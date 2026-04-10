@@ -154,7 +154,6 @@ impl CDRom {
             Command::Play => self.command_play(),
             Command::MotorOn => self.command_motor_on(second_response),
             Command::Mute => self.command_mute(),
-            _ => todo!("Command {:?} not implemented", cmd),
         }
     }
 
@@ -235,8 +234,8 @@ impl CDRom {
     }
     // Setloc - Command 02h,amm,ass,asect --> INT3(stat)
     fn command_setloc(&mut self) -> CommandState {
-        let mut min = BCD::decode(self.parameter_fifo.pop_front().unwrap());
-        let mut sec = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+        let min = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+        let sec = BCD::decode(self.parameter_fifo.pop_front().unwrap());
         let frame = BCD::decode(self.parameter_fifo.pop_front().unwrap());
 
         if let Some(loc) = DiscTime::new_checked(min, sec, frame) {
@@ -673,7 +672,7 @@ impl CDRom {
     // GetTD - Command 14h,track --> INT3(stat,mm,ss) ;BCD
     fn command_get_td(&mut self) -> CommandState {
         if let Some(disc) = self.disc.as_ref() {
-            let mut track_n = BCD::decode(self.parameter_fifo.pop_front().unwrap());
+            let track_n = BCD::decode(self.parameter_fifo.pop_front().unwrap());
             match disc.get_track_by_number(track_n) {
                 Some(track) => {
                     let start_time = track.effective_start_time();

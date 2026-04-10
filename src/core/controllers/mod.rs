@@ -1,7 +1,7 @@
 mod memory_card;
 
 use crate::core::controllers::memory_card::MemoryCard;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 #[derive(Copy, Clone, Debug)]
 pub enum ControllerButton {

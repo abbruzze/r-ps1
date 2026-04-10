@@ -1,10 +1,10 @@
 use crate::core::clock::Clock;
-use crate::core::interrupt::{InterruptController, InterruptType, IrqHandler};
+use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::rc::Rc;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 pub trait DmaDevice {
     // true if device is ready for DMA transfer

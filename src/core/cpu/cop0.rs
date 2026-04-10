@@ -1,4 +1,4 @@
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use crate::core::cpu::CpuException;
 use crate::core::cpu::{Coprocessor, CopResult};
 

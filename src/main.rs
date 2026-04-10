@@ -5,7 +5,6 @@ use clap::{Parser, ValueEnum};
 use tracing::info;
 use crate::core::config::{Config, RegionPolicyConfig};
 use crate::core::emu::{EMU_BUILD_DATE_TIME, EMU_NAME, EMU_VERSION};
-use crate::core::memory::BIOS_LEN;
 
 mod core;
 mod log;
