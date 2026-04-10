@@ -432,7 +432,12 @@ impl Default for LogConfig {
 pub struct GPUConfig {
     pub command_delay_enabled: bool,
     pub rendering_type: Option<String>,
-} 
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CdromConfig {
+    pub show_cdrom_access: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Config {
@@ -448,6 +453,7 @@ pub struct Config {
     pub memory_config: MemoryConfig,
     pub log_config: LogConfig,
     pub gpu_config: GPUConfig,
+    pub cdrom_config: CdromConfig,
 }
 
 impl Config {

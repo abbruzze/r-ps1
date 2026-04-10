@@ -8,16 +8,19 @@ use std::time::Instant;
 use fast_image_resize::images::Image;
 use fast_image_resize::{PixelType, ResizeOptions, Resizer, IntoImageView, ResizeAlg, FilterType};
 use gilrs::{Event, EventType, Gilrs};
+use image::GenericImageView;
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Icon, Window, WindowId};
 use crate::core::cdrom::Region;
 use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
+
+static ICON_PNG: &[u8] = include_bytes!("../../resources/r-ps1_icon_32x32.png");
 
 const DEFAULT_WIDTH: usize = 640;
 const DEFAULT_HEIGHT: usize = 480;
@@ -267,12 +270,14 @@ struct PixelsRenderer {
     debug_mode: bool,
     last_performance: u16,
     last_cd_access: Option<CDOperation>,
+    disc_name: Option<String>,
     region: Region,
     pending_region_change: Option<Region>,
     image_resizer: Resizer,
     image_resizer_options: ResizeOptions,
     resize_adjust_pending: bool,
     last_window_size: Option<PhysicalSize<u32>>,
+    iconified: bool,
 }
 
 impl PixelsRenderer {
@@ -296,12 +301,14 @@ impl PixelsRenderer {
             debug_mode: false,
             last_performance: 0,
             last_cd_access: None,
+            disc_name: None,
             region: Region::USA,
             pending_region_change: None,
             image_resizer: Resizer::new(),
             image_resizer_options: ResizeOptions::new(),
             resize_adjust_pending: false,
             last_window_size: None,
+            iconified: false,
         };
 
         if let Some(renderer_type) = renderer.config.gpu_config.rendering_type.as_ref() {
@@ -360,9 +367,16 @@ impl PixelsRenderer {
                             CDOperation::Idle => {
                                 String::from("")
                             }
+                            _ => String::from("")
                         }
                     }
                     None => String::from("")
+                };
+                let disc_name = if self.config.cdrom_config.show_cdrom_access {
+                    self.disc_name.clone().unwrap_or_else(|| String::from(""))
+                }
+                else {
+                    String::from("")
                 };
                 if self.warp_mode || self.paused || self.debug_mode  || self.audio_muted {
                     let mut info = String::new();
@@ -378,10 +392,10 @@ impl PixelsRenderer {
                     if self.audio_muted {
                         info.push_str(" (muted)");
                     }
-                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
                 else {
-                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
             }
             self.fps_frames = 0;
@@ -444,6 +458,7 @@ impl PixelsRenderer {
 
                 if pixels.resize_buffer(adjusted_width, adjusted_height).is_err() {
                     println!("Pixels buffer resize error");
+                    return;
                 }
 
                 pixels.resize_surface(window_size.width, window_size.height).unwrap();
@@ -479,12 +494,17 @@ impl PixelsRenderer {
 
 impl ApplicationHandler<PS1Event> for PixelsRenderer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let image = image::load_from_memory(ICON_PNG).unwrap();
+        let image_raw = image.to_rgba8().into_raw();
+        let icon = Icon::from_rgba(image_raw, image.width(),image.height()).unwrap();
+
         let window_attrs = Window::default_attributes()
             .with_title("r-ps1 - Starting up ...")
             .with_inner_size(winit::dpi::LogicalSize::new(
                 (self.width * self.scale) as u32,
                 (self.height * self.scale) as u32,
             ))
+            .with_window_icon(Some(icon))
             .with_resizable(true);
 
         let window = event_loop.create_window(window_attrs).unwrap();
@@ -517,7 +537,9 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PS1Event) {
         match event {
             PS1Event::NewFrame(frame, last_performance) => {
-                self.new_frame(&frame,last_performance);
+                if !self.iconified {
+                    self.new_frame(&frame, last_performance);
+                }
             }
             PS1Event::WarpMode(on) => {
                 self.warp_mode = on;
@@ -527,7 +549,14 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                 self.update_fps(true);
             }
             PS1Event::CDROMAccess(access) => {
-                self.last_cd_access = Some(access);
+                match access {
+                    CDOperation::DiscLoading(name) => {
+                        self.disc_name = Some(name);
+                    }
+                    _ => {
+                        self.last_cd_access = Some(access);
+                    }
+                }
             }
             PS1Event::Shutdown => {
                 info!("Shutting down GUI ...");
@@ -547,15 +576,24 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             WindowEvent::CloseRequested => {
                 let _ = self.gui_event_tx.send(GUIEvent::Shutdown);
             },
-            WindowEvent::Resized(mut new_size) => {
-                if let Some(pixels) = &mut self.pixels {
+            WindowEvent::Resized(new_size) => {
+                if new_size.width == 0 || new_size.height == 0 {
+                    self.iconified = true;
+                    if !self.paused {
+                        let _ = self.gui_event_tx.send(GUIEvent::Paused);
+                        self.paused = true;
+                    }
+                }
+                else if let Some(pixels) = &mut self.pixels {
+                    if self.iconified {
+                        self.iconified = false;
+                        let _ = self.gui_event_tx.send(GUIEvent::Paused);
+                        self.paused = false;
+                    }
                     if pixels.resize_surface(new_size.width, new_size.height).is_err() {
                         println!("Pixels surface resize error");
                     }
                 }
-            }
-            WindowEvent::RedrawRequested => {
-                //self.update_fps(false);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.last_key = event.state.is_pressed();

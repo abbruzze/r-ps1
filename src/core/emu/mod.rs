@@ -25,6 +25,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use std::{fs, io, thread};
+use std::path::{Path, PathBuf};
 use thread::spawn;
 use tracing::{error, info, warn};
 use crate::core::bios::PS1_BIOS_SET;
@@ -227,6 +228,13 @@ impl Emulator {
                     self.gpu.borrow_mut().set_video_mode(video_mode);
 
                     self.cdrom.borrow_mut().insert_disk(disc);
+                    let disc_name = PathBuf::from(disc_path);
+                    let name = Path::new(&disc_name)
+                        .file_stem()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string();
+                    self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(CDOperation::DiscLoading(name));
                 }
                 Err(e) => {
                     error!("Error while loading disc: {:?}",e);
