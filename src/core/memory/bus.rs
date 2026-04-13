@@ -290,15 +290,15 @@ impl Bus {
 
     fn read_unmapped(&mut self,address:u32,_size:usize) -> ReadMemoryAccess {
         warn!("Reading from an unmapped I/O address: {:08X}",address);
-        exit(1);
-        //ReadMemoryAccess::BusError
+        //exit(1);
+        ReadMemoryAccess::BusError
         //ReadMemoryAccess::Read(0,0)
     }
 
     fn write_unmapped(&mut self,address:u32,value:u32,_size:usize) -> WriteMemoryAccess {
         warn!("Writing to an unmapped I/O address: {:08X} = {:08X}",address,value);
-        exit(1);
-        //WriteMemoryAccess::BusError
+        //exit(1);
+        WriteMemoryAccess::BusError
         //WriteMemoryAccess::Write(0)
     }
 
@@ -735,7 +735,13 @@ impl Bus {
                         WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES)
                     }
                 }
-                _ => {}
+                adr => {
+                    if (adr & 0xFFF0) == 0x1130 { // strange timer related addresses: do nothing
+                        self.io_mem_bridge.read[fun_offset] = |_bus,_address,_size| ReadMemoryAccess::Read(0, IO_REG_ACCESS_CYCLES);
+                        self.io_mem_bridge.peek[fun_offset] = |_bus,_address| Some(0);
+                        self.io_mem_bridge.write[fun_offset] = |_bus,_address,_value,_size| WriteMemoryAccess::Write(IO_REG_ACCESS_CYCLES);
+                    }
+                }
             }
         }
     }
