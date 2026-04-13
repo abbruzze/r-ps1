@@ -966,7 +966,7 @@ impl GPU {
             let row_offset_base = crt_start_y_offset * (crt_width << 2) + (crt_start_x_offset << 2);
             for y in 0..frame_height.min(crt_height) {
                 let mut row_offset = y * (crt_width << 2) + row_offset_base;
-                for x in 0..frame_width {
+                for x in 0..frame_width.min(crt_width) {
                     let vram_x = vram_x0 + x;
                     let vram_y = vram_y0 + y;
 

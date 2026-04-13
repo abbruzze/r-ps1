@@ -1,5 +1,5 @@
 use std::process::exit;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use crate::core::cdrom::{CDRom, Command, DriveState};
 use crate::core::cdrom::commands::{INT1, INT4};
 use crate::core::cdrom::disc::BCD;
@@ -18,7 +18,7 @@ impl CDRom {
                         (!self.adpcm.filter_enabled || sector.matches_file_and_channel(self.adpcm.file,self.adpcm.channel)) {
                         // Audio ADPCM
                         self.adpcm.decode_sector(&sector.sector);
-                        info!("CDROM Audio ADPCM sector at {:?},decoding ...",disc.get_head_position());
+                        debug!("CDROM Audio ADPCM sector at {:?},decoding ...",disc.get_head_position());
                     }
                     else if self.adpcm.filter_enabled && sector.is_audio_adpcm() {
                         // The controller does not send sectors to the data FIFO if ADPCM filtering is enabled
@@ -61,7 +61,7 @@ impl CDRom {
         if let Some(disc) = self.disc.as_mut() {
             match disc.read_sector() {
                 Some(sector) => {
-                    info!("Playing audio sector at {:?}",disc.get_head_position());
+                    debug!("Playing audio sector at {:?}",disc.get_head_position());
                     self.last_audio_sector = sector.get_audio_data();
                 }
                 None => {
@@ -87,7 +87,7 @@ impl CDRom {
                     report[4] = if report_absolute { time.s() } else { time.s() + 0x80 };
                     report[5] = time.f();
                     // TODO peak values
-                    info!("CDROM Sending play report: {:?} is_absolute={report_absolute} time={:?} track={:?}",report,time,track);
+                    //info!("CDROM Sending play report: {:?} is_absolute={report_absolute} time={:?} track={:?}",report,time,track);
                 }
 
                 for e in report.iter_mut() {

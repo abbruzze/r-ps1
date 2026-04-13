@@ -1,7 +1,7 @@
 use crate::core::cpu::cop2::Cop2;
 use crate::core::cpu::instruction::{Instruction, Opcode};
 use crate::core::memory;
-use crate::core::memory::{Memory, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
+use crate::core::memory::{Memory, MemoryMap, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
 use std::mem;
 use tracing::{debug, error, info};
 use crate::core::config::Config;
@@ -619,7 +619,8 @@ impl Cpu {
         // 3) writing to full write-queue
         if opcode.is_write_memory() {
             let target_address = self.get_read_write_memory_address(&i);
-            use_write_cache = self.write_queue_enabled && memory::get_memory_seg(target_address).is_cached();
+            let MemoryMap(segment,section,_,_) = memory::get_memory_map(target_address);
+            use_write_cache = self.write_queue_enabled && segment.is_cached() && matches!(section,MemorySection::MainRAM | MemorySection::ScratchPad);
             if !use_write_cache && dma_in_progress && !matches!(memory::get_memory_section(target_address),MemorySection::ScratchPad) {
                 return self.op_cycles;
             }

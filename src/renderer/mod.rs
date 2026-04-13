@@ -1,5 +1,6 @@
 pub mod pixels;
 
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use crate::core::cdrom::{CDOperation, Region};
 use crate::core::config::Config;
@@ -24,6 +25,7 @@ pub enum GUIEvent {
     VRAMDebugMode,
     Shutdown,
     Mute,
+    InsertDisc(PathBuf),
 }
 
 /*

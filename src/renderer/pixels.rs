@@ -572,6 +572,9 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
+            WindowEvent::DroppedFile(file) => {
+                let _ = self.gui_event_tx.send(GUIEvent::InsertDisc(file));
+            }
             WindowEvent::CloseRequested => {
                 let _ = self.gui_event_tx.send(GUIEvent::Shutdown);
             },

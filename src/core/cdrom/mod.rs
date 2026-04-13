@@ -7,7 +7,8 @@ mod xaadpcm;
 
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+use crate::core::cdrom::commands::INT5;
 use crate::core::cdrom::disc::{AudioLeftRight, Disc, DiscTime, TrackSectorDataSize};
 use crate::core::cdrom::xaadpcm::XaAdpcmState;
 use crate::core::clock::Clock;
@@ -179,6 +180,8 @@ pub enum CDOperation {
     Idle,
 }
 
+const CHANGE_DISK_CYCLES: usize = 44_100 * 2;
+
 pub struct CDRom {
     drive_state: DriveState,
     disc: Option<Disc>,
@@ -197,10 +200,13 @@ pub struct CDRom {
     audio_sample: AudioLeftRight,
     command_state: CommandState,
     shell_once_opened: bool,
+    send_int5_shell_opened: bool,
     motor_on: bool,
     pending_setloc: Option<DiscTime>,
     mode: u8,
     adpcm: XaAdpcmState,
+    changing_disk_cycles: usize,
+    pending_disc: Option<Disc>,
 }
 
 impl DmaDevice for CDRom {
@@ -236,25 +242,53 @@ impl CDRom {
             data_buffer: Default::default(),
             last_sector: Vec::with_capacity(disc::SECTOR_SIZE as usize),
             last_audio_sector: Vec::with_capacity(disc::SECTOR_SIZE as usize),
-            cd_to_spu_volume: [[0; 2]; 2],
-            pending_cd_to_spu_volume: [[0; 2]; 2],
+            cd_to_spu_volume: [[0x80,0],[0x80,0]],
+            pending_cd_to_spu_volume: [[0x80,0],[0x80,0]],
             audio_mute: false,
             audio_sample: AudioLeftRight(0,0),
             command_state: CommandState::Idle,
             shell_once_opened: false,
+            send_int5_shell_opened: false,
             motor_on: false,
             pending_setloc: None,
             mode: 0,
             adpcm: XaAdpcmState::new(),
+            changing_disk_cycles: 0,
+            pending_disc: None,
         }
     }
 
     pub fn insert_disk(&mut self,disc:Disc) {
-        self.disc = Some(disc);
-        info!("CDROM inserted disk '{}'",self.disc.as_ref().unwrap().get_cue_file_name());
+        if let Some(old_disc) = self.disc.take() {
+            info!("CDROM removing disk '{}'. Inserting disk '{}'",old_disc.get_cue_file_name(),disc.get_cue_file_name());
+            self.drive_state = DriveState::Idle;
+            self.command_state = CommandState::Idle;
+
+            self.pending_disc = Some(disc);
+            self.changing_disk_cycles = CHANGE_DISK_CYCLES;
+            self.shell_once_opened = true;
+            self.send_int5_shell_opened = true;
+        }
+        else {
+            self.disc = Some(disc);
+            info!("CDROM inserted disk '{}'",self.disc.as_ref().unwrap().get_cue_file_name());
+        }
     }
 
     pub fn clock_44100hz(&mut self,irq_handler: &mut IrqHandler) -> CDOperation {
+        if self.changing_disk_cycles > 0 {
+            if self.send_int5_shell_opened {
+                self.send_int5_shell_opened = false;
+                self.apply_irq_and_result(Command::Nop,INT5,vec![self.get_stat(false, false, false)],irq_handler);
+            }
+            self.changing_disk_cycles -= 1;
+            if self.changing_disk_cycles == 0 {
+                if let Some(disc) = self.pending_disc.take() {
+                    self.disc = Some(disc);
+                    info!("CDROM inserted disk '{}'",self.disc.as_ref().unwrap().get_cue_file_name());
+                }
+            }
+        }
         self.audio_sample = AudioLeftRight(0,0);
         self.check_drive_state(irq_handler);
         self.check_command_state(irq_handler);
@@ -351,8 +385,7 @@ impl CDRom {
 
     #[inline(always)]
     fn is_shell_opened(&self) -> bool {
-        // TODO
-        false
+        self.changing_disk_cycles > 0
     }
     #[inline(always)]
     fn is_disk_inserted(&self) -> bool {
@@ -361,7 +394,7 @@ impl CDRom {
 
     fn activate_motor(&mut self,enabled:bool) {
         self.motor_on = true;
-        info!("CDROM motor activated: {enabled}");
+        debug!("CDROM motor activated: {enabled}");
         // TODO
     }
 
@@ -542,27 +575,27 @@ impl CDRom {
         self.hintmsk_reg = value;
     }
     fn write_atv0(&mut self, value: u8) {
-        info!("L CD to L SPU volume: {value:02X}");
+        debug!("L CD to L SPU volume: {value:02X}");
         self.pending_cd_to_spu_volume[0][0] = value;
     }
     fn write_atv1(&mut self,value:u8) {
-        info!("L CD to R SPU volume: {value:02X}");
+        debug!("L CD to R SPU volume: {value:02X}");
         self.pending_cd_to_spu_volume[1][0] = value;
     }
     fn write_atv2(&mut self, value: u8) {
-        info!("R CD to R SPU volume: {value:02X}");
+        debug!("R CD to R SPU volume: {value:02X}");
         self.pending_cd_to_spu_volume[1][1] = value;
     }
     fn write_atv3(&mut self, value: u8) {
-        info!("R CD to L SPU volume: {value:02X}");
+        debug!("R CD to L SPU volume: {value:02X}");
         self.pending_cd_to_spu_volume[0][1] = value;
     }
 
     fn write_data(&mut self, _value: u8) {
-        info!("CDROM write data");
+        debug!("CDROM write data");
     }
     fn write_ci(&mut self, _value: u8) {
-        info!("CDROM write ci");
+        debug!("CDROM write ci");
     }
 
     #[inline]
@@ -617,10 +650,10 @@ impl CDRom {
     Setting CHPRST will result in a complete reset of the decoder. Unclear if this also reboots the HC05 and CD-ROM DSP (the decoder has an "external reset" pin which is pulled low when setting CHPRST).
      */
     fn write_hclrctl(&mut self, value: u8) {
-        //info!("CDROM write hclrctl {:02X}",value);
+        debug!("CDROM write hclrctl {:02X}",value);
         self.ack_irqs(value);
         if (value & 0x40) != 0 {
-            //info!("Resetting parameter FIFO..");
+            debug!("Resetting parameter FIFO..");
             self.parameter_fifo.clear();
         }
     }
@@ -633,7 +666,7 @@ impl CDRom {
       6-7  -       Reserved                (should be 0)
      */
     fn write_adpctl(&mut self,value:u8) {
-        info!("CDROM write adpctl {value:02X}");
+        debug!("CDROM write adpctl {value:02X}");
         self.adpcm.muted = (value & 0x01) != 0;
         if (value & 0x20) != 0 {
             self.cd_to_spu_volume = self.pending_cd_to_spu_volume;
@@ -646,7 +679,7 @@ impl CDRom {
    Before sending a command, write any parameter byte(s) to this address. The FIFO can hold up to 16 bytes; once full, the decoder will clear the PRMWRDY flag.
     */
     fn write_parameter(&mut self,value:u8) {
-        //info!("CDROM write cmd parameter {:02X}",value);
+        debug!("CDROM write cmd parameter {:02X}",value);
         if self.parameter_fifo.len() < PARAMETER_FIFO_LEN {
             self.parameter_fifo.push_back(value);
         } else {

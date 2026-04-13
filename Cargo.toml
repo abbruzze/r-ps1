@@ -30,20 +30,18 @@ image = "0.25.10"
 embed-resource = "3.0.8"
 
 [profile.release]
-#debug = true
-#opt-level = 3
-lto = "thin"
-codegen-units = 16
+opt-level = 2
 incremental = true
-#panic = "abort"
+codegen-units = 256
+debug = true
+lto = false
 
 [profile.fast]
 inherits = "release"
-opt-level = 3          # massimo livello di ottimizzazione
-lto = "thin"           # link-time optimization più bilanciata
-codegen-units = 16     # permette la compilazione parallela (molto più veloce)
-panic = "abort"       # elimina overhead unwinding
-strip = true          # riduce dimensione binario
-# opzionale ma utile
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
 debug = false
-incremental = true
+incremental = false

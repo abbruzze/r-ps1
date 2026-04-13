@@ -97,7 +97,7 @@ impl MemorySegment {
     }
 }
 
-pub struct MemoryMap(MemorySegment, MemorySection,u32,u32);
+pub struct MemoryMap(pub MemorySegment,pub MemorySection,pub u32,pub u32);
 
 /*
   KUSEG     KSEG0     KSEG1

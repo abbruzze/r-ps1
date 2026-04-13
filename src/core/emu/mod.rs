@@ -179,11 +179,11 @@ impl Emulator {
         }
     }
 
-    fn load_disc(&mut self) {
-        let load_exe_pending = self.config.disc_path.as_deref().unwrap_or("").to_uppercase().ends_with("EXE");
+    fn load_disc(&mut self,disc_path:&String,allow_exe:bool) {
+        let load_exe_pending = allow_exe && disc_path.to_uppercase().ends_with("EXE");
 
         if load_exe_pending {
-            let exe_path = self.config.disc_path.as_deref().unwrap();
+            let exe_path = disc_path.as_str();
 
             info!("Loading exe '{}', waiting CPU to reach loading point ...",exe_path);
 
@@ -201,9 +201,9 @@ impl Emulator {
                 }
             }
         }
-        else if let Some(disc_path) = self.config.disc_path.as_deref() {
+        else {
             info!("Loading disc '{}' ...",disc_path);
-            match crate::core::cdrom::disc::Disc::new(&String::from(disc_path)) {
+            match crate::core::cdrom::disc::Disc::new(&disc_path) {
                 Ok(disc) => {
                     let region = match self.config.region_policy {
                         RegionPolicyConfig::Auto => {
@@ -269,7 +269,9 @@ impl Emulator {
 
         let mut irq_handler = IrqHandler::new();
 
-        self.load_disc();
+        if let Some(disc_path) = self.config.disc_path.clone() {
+            self.load_disc(&disc_path,false);
+        }
 
         self.just_entered_in_step_mode = false;
         self.run_mode = RunMode::FreeMode;
@@ -406,6 +408,9 @@ impl Emulator {
                 GUIEvent::Shutdown => {
                     self.shutdown();
                     self.gpu.borrow_mut().get_renderer_mut().shutdown();
+                }
+                GUIEvent::InsertDisc(disc_path) => {
+                    self.load_disc(&disc_path.to_string_lossy().to_string(),false);
                 }
             }
         }

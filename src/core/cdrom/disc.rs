@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use crate::core::cdrom::{cue, util, Region};
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
@@ -455,7 +455,7 @@ impl Disc {
         let resp = match self.find_track(msf) {
             Some((track,file,file_path)) => {
                 track_number = Some(track.track_number());
-                info!("Reading sector {} from track {} in '{}'",msf,track.track_number(),file_path.display());
+                debug!("Reading sector {} from track {} in '{}'",msf,track.track_number(),file_path.display());
                 let mut sector = DataSector::empty(msf.to_lba());
                 match track.read_sector_into(file, msf, &mut sector.sector) {
                     Ok(true) => Some(sector),
@@ -485,7 +485,7 @@ impl Disc {
         self.head_position = msf;
         match self.find_track(msf) {
             Some((track,..)) => {
-                info!("Seeking to sector {}: found track {}",msf,track.track_number());
+                debug!("Seeking to sector {}: found track {}",msf,track.track_number());
                 self.track_number = track.track_number() - 1;
             },
             None => {

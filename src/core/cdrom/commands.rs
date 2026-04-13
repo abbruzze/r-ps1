@@ -1,5 +1,5 @@
 use std::process::exit;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use crate::core::cdrom::{CDRom, Command, CommandState, DriveState, Region, CDROM_VER};
 use crate::core::cdrom::disc::{AudioLeftRight, DiscTime, TrackType, BCD};
 use crate::core::interrupt::IrqHandler;
@@ -15,6 +15,7 @@ pub(super) const STAT_NO_DATA : &[u8] = &[];
 
 pub(super) const FIRST_RESPONSE_IRQ_DELAY_44100 : usize = 1;
 pub(super) const STD_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = delay_cycles_44100(0x4A73);
+pub(super) const INIT_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = delay_cycles_44100(900_000);
 pub(super) const GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100: usize = STD_SECOND_RESPONSE_IRQ_DELAY_44100;
 pub(super) const READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100: usize = STD_SECOND_RESPONSE_IRQ_DELAY_44100;
 
@@ -124,7 +125,7 @@ impl CDRom {
     }
 
     pub(super) fn apply_irq_and_result(&mut self,cmd:Command, irq: u8, response: Vec<u8>, irq_handler: &mut IrqHandler) {
-        info!("CDROM applying irq {:02X} with response {:?} for command {cmd:?}",irq,response);
+        debug!("CDROM applying irq {:02X} with response {:?} for command {cmd:?}",irq,response);
         self.set_irq(irq);
         self.check_irq(irq_handler);
         for b in response {
@@ -554,7 +555,7 @@ impl CDRom {
                 STAT_NO_ERR,
                 CommandState::Delay {
                     cmd: Command::Pause,
-                    delay_cycles: STD_SECOND_RESPONSE_IRQ_DELAY_44100,
+                    delay_cycles: INIT_SECOND_RESPONSE_IRQ_DELAY_44100,
                     next_state: Box::new(
                         CommandState::Response2 { cmd: Command::Init }
                     )
@@ -587,6 +588,7 @@ impl CDRom {
             }
             self.make_stat_response(INT2, Command::Stop)
         } else {
+            self.drive_state = DriveState::Idle;
             self.make_response(
                 Command::Stop,
                 INT3,
