@@ -1,0 +1,78 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 🔧 Linux dependencies
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config zip
+
+      # 📦 Build
+      - name: Build
+        run: cargo build --release
+
+      # 📁 Output folder
+      - name: Prepare bundle (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir bundle
+          cp target/release/r-ps1 bundle/
+          chmod +x bundle/r-ps1
+          zip -r r-ps1-linux.zip bundle
+
+      - name: Prepare bundle (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir bundle
+          copy target\release\r-ps1.exe bundle\
+          powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-windows.zip
+
+      # 🧪 Artifact (branch only)
+      - name: Upload artifact
+        if: github.ref_type == 'branch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-ps1-${{ matrix.os }}
+          path: |
+            *.zip
+
+      # 📝 Changelog
+      - name: Generate changelog
+        if: github.ref_type == 'tag'
+        id: changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # 🚀 Release (tag only)
+      - name: Create Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.CHANGELOG }}
+          files: |
+            r-ps1-linux.zip
+            r-ps1-windows.zip
