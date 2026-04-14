@@ -36,14 +36,14 @@ jobs:
       # Linux binary stripping
       - name: Strip binary
         if: matrix.os == 'ubuntu-latest'
-        run: strip target/release/r-ps1
+        run: strip target/fast/r-ps1
 
       # 📁 Output folder
       - name: Prepare bundle (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir bundle
-          cp target/release/r-ps1 bundle/
+          cp target/fast/r-ps1 bundle/
           chmod +x bundle/r-ps1
           zip -r r-ps1-linux.zip bundle
 
@@ -51,7 +51,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           mkdir bundle
-          copy target\release\r-ps1.exe bundle\
+          copy target\fast\r-ps1.exe bundle\
           powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-windows.zip
 
       # 🧪 Artifact (branch only)
