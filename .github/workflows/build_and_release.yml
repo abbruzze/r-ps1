@@ -31,7 +31,12 @@ jobs:
 
       # 📦 Build
       - name: Build
-        run: cargo build --release
+        run: cargo build --profile fast
+
+      # Linux binary stripping
+      - name: Strip binary
+        if: matrix.os == 'ubuntu-latest'
+        run: strip target/release/r-ps1
 
       # 📁 Output folder
       - name: Prepare bundle (Linux)
