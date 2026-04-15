@@ -10,7 +10,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "value=$VERSION" >> $GITHUB_OUTPUT
+
   build:
+    needs: prepare
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -19,7 +34,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
 
       # 🔧 Linux dependencies
@@ -28,15 +42,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev pkg-config zip
-
-      # 🏷️ Read version from Cargo.toml
-      - name: Get version
-        if: matrix.os == 'ubuntu-latest'
-        id: version
-        shell: bash
-        run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          echo "value=$VERSION" >> $GITHUB_OUTPUT
 
       # 📦 Build
       - name: Build
@@ -54,21 +59,21 @@ jobs:
           mkdir bundle
           cp target/fast/r-ps1 bundle/
           chmod +x bundle/r-ps1
-          cd bundle && zip -r ../r-ps1-${{ steps.version.outputs.value }}-linux.zip .
+          cd bundle && zip -r ../r-ps1-${{ needs.prepare.outputs.version }}-linux.zip .
 
       - name: Prepare bundle (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           mkdir bundle
           copy target\fast\r-ps1.exe bundle\
-          powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-${{ steps.version.outputs.value }}-windows.zip
+          powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-${{ needs.prepare.outputs.version }}-windows.zip
 
       # 🧪 Artifact (branch only)
       - name: Upload artifact
         if: github.ref_type == 'branch'
         uses: actions/upload-artifact@v4
         with:
-          name: r-ps1-${{ steps.version.outputs.value }}-${{ matrix.os }}
+          name: r-ps1-${{ needs.prepare.outputs.version }}-${{ matrix.os }}
           path: |
             *.zip
 
@@ -88,5 +93,5 @@ jobs:
         with:
           body: ${{ steps.changelog.outputs.CHANGELOG }}
           files: |
-            r-ps1-${{ steps.version.outputs.value }}-linux.zip
-            r-ps1-${{ steps.version.outputs.value }}-windows.zip
+            r-ps1-${{ needs.prepare.outputs.version }}-linux.zip
+            r-ps1-${{ needs.prepare.outputs.version }}-windows.zip
