@@ -15,9 +15,11 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Icon, Window, WindowId};
+use crate::core::emu::EMU_NAME;
 use crate::core::cdrom::Region;
 use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
+use crate::core::emu::EMU_VERSION;
 
 static ICON_PNG: &[u8] = include_bytes!("../../resources/r-ps1_icon_32x32.png");
 
@@ -391,10 +393,10 @@ impl PixelsRenderer {
                     if self.audio_muted {
                         info.push_str(" (muted)");
                     }
-                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                    window.set_title(&format!("{} v.{} - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
                 else {
-                    window.set_title(&format!("r-ps1 - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                    window.set_title(&format!("{} v.{} - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
             }
             self.fps_frames = 0;
@@ -498,7 +500,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         let icon = Icon::from_rgba(image_raw, image.width(),image.height()).unwrap();
 
         let window_attrs = Window::default_attributes()
-            .with_title("r-ps1 - Starting up ...")
+            .with_title(format!("{} - Starting up ...",EMU_NAME))
             .with_inner_size(winit::dpi::LogicalSize::new(
                 (self.width * self.scale) as u32,
                 (self.height * self.scale) as u32,

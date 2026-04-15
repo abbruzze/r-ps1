@@ -501,11 +501,11 @@ impl CDRom {
         let send_int1 = self.read_data_sector(irq_handler);
         let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
         if send_int1 {
-            info!("CDROM reading sending INT1");
+            debug!("CDROM reading sending INT1");
             self.apply_irq_and_result(Command::Read,INT1, vec![self.get_stat(false, false, false)], irq_handler);
         }
 
-        info!("CDROM reading next sector in {} cycles",next_sector_cycles);
+        debug!("CDROM reading next sector in {} cycles",next_sector_cycles);
         DriveState::Reading { next_sector_cycles }
     }
     // Pause - Command 09h --> INT3(stat) --> INT2(stat)

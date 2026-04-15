@@ -30,6 +30,7 @@
 //! from each block, then the second sample from each block, then the third, etc. The final 4 bytes
 //! contain the 28th sample from each block.
 
+use tracing::warn;
 use crate::core::spu::adpcm;
 use crate::core::spu::adpcm::{FILTER_0_TABLE, FILTER_1_TABLE};
 
@@ -153,7 +154,7 @@ impl XaAdpcmState {
         let coding_info = sector[19];
         if coding_info != 0x00 && coding_info != 0x01 && coding_info != 0x04 && coding_info != 0x05
         {
-            todo!("CD-XA ADPCM sector with coding info {coding_info:02X}");
+            warn!("CD-XA ADPCM sector with coding info {coding_info:02X}");
         }
 
         self.channel_mode =

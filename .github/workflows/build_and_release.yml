@@ -29,6 +29,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev pkg-config zip
 
+      # 🏷️ Read version from Cargo.toml (Linux)
+      - name: Get version (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "value=$VERSION" >> $GITHUB_OUTPUT
+
+      # 🏷️ Read version from Cargo.toml (Windows)
+      - name: Get version (Windows)
+        if: matrix.os == 'windows-latest'
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
+          echo "value=$version" >> $env:GITHUB_OUTPUT
+
       # 📦 Build
       - name: Build
         run: cargo build --profile fast
@@ -45,14 +62,14 @@ jobs:
           mkdir bundle
           cp target/fast/r-ps1 bundle/
           chmod +x bundle/r-ps1
-          zip -r r-ps1-linux.zip bundle
+          zip -r r-ps1-${{ steps.version.outputs.value }}-linux.zip bundle
 
       - name: Prepare bundle (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           mkdir bundle
           copy target\fast\r-ps1.exe bundle\
-          powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-windows.zip
+          powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-${{ steps.version.outputs.value }}-windows.zip
 
       # 🧪 Artifact (branch only)
       - name: Upload artifact
