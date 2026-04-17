@@ -80,6 +80,7 @@ impl GPU {
         match self.gp0state {
             Gp0State::WaitingCommand => {
                 debug!("GPU GP0 command {:08X}",cmd);
+                self.cmd_fifo.clear();
                 match Self::cmd_to_operation(cmd) {
                     Some((needs_params,operation)) => {
                         if needs_params {
