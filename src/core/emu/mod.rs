@@ -136,7 +136,7 @@ impl Emulator {
         ];
         
         let dma = Rc::new(RefCell::new(DMAController::new(&devices)));
-        let bus = Bus::new(ClockConfig::NTSC,bios,&dma,&gpu,&cdrom,&mdec,&spu);
+        let bus = Bus::new(ClockConfig::NTSC,&config,bios,&dma,&gpu,&cdrom,&mdec,&spu);
 
         let emu = Self {
             cpu,bus,

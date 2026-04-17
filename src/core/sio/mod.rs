@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use crate::core::clock::{Clock, EventType};
 use crate::core::CPU_CLOCK;
 use crate::core::controllers::Controller;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 
 // some attempts here...
-const TX_RX_DATA_CYCLES : usize = 10 * CPU_CLOCK / 250_000; // 8 bit sent + 8 bit received at 250 kbps
+const TX_RX_DATA_CYCLES : usize = 10; //(10 * CPU_CLOCK / 250_000) as u64; // 8 bit sent + 8 bit received at 250 kbps
 const ACK_TIMEOUT_CYCLES : u64 = 100;
 
 /*
@@ -36,10 +36,12 @@ pub struct SIO0 {
     tx_idle:bool,
     ack_asserted: bool,
     start_timer_timestamp: u64,
+    response_cycles: u64,
 }
 
 impl SIO0 {
-    pub fn new(c1_connected:bool,c2_connected:bool) -> SIO0 {
+    pub fn new(c1_connected:bool,c2_connected:bool,response_cycles:Option<usize>) -> SIO0 {
+        info!("Controller tx_rx cycles set to {} cycles",response_cycles.unwrap_or(TX_RX_DATA_CYCLES));
         SIO0 {
             baud: 0,
             mode: 0,
@@ -52,6 +54,7 @@ impl SIO0 {
             tx_idle: true,
             ack_asserted: false,
             start_timer_timestamp: 0,
+            response_cycles: (response_cycles.unwrap_or(TX_RX_DATA_CYCLES) * CPU_CLOCK / 250_000) as u64,
         }
     }
 
@@ -203,7 +206,7 @@ impl SIO0 {
         */
 
         self.start_timer_timestamp = clock.current_time();
-        clock.schedule(EventType::SIO0Byte, TX_RX_DATA_CYCLES as u64);
+        clock.schedule(EventType::SIO0Byte, self.response_cycles);
     }
 
     pub fn on_event(&mut self,event:EventType,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {

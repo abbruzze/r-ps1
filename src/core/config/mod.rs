@@ -374,6 +374,7 @@ pub struct ControllersConfig {
     pub save_writings_to_disk: bool,
     pub auto_discover_usb_controllers: bool,
     pub usb_direction_resolution: f32,
+    pub tx_rx_cycles: Option<usize>,
 }
 
 impl Default for ControllersConfig {
@@ -394,6 +395,7 @@ impl Default for ControllersConfig {
             save_writings_to_disk: true,
             auto_discover_usb_controllers: true,
             usb_direction_resolution: 0.1,
+            tx_rx_cycles: None,
         }
     }
 }
