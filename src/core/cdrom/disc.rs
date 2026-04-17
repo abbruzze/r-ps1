@@ -131,13 +131,13 @@ pub enum TrackSectorDataSize {
 }
 #[derive(Debug)]
 pub struct DataSector {
-    pub lba: u32,
+    pub track: u8,
     pub sector: [u8; SECTOR_SIZE as usize],
 }
 
 impl DataSector {
-    fn empty(lba:u32) -> Self {
-        Self { lba, sector: [0; SECTOR_SIZE as usize] }
+    fn empty(track:u8) -> Self {
+        Self { track, sector: [0; SECTOR_SIZE as usize] }
     }
 
     /*
@@ -194,6 +194,13 @@ impl DataSector {
     }
 
     pub fn get_audio_data(&self) -> Vec<AudioLeftRight> {
+        if self.track == 1 { // data track
+            let mut result = Vec::with_capacity(self.sector.len() / 4);
+            for i in 0..(self.sector.len() / 4) {
+                result.push(AudioLeftRight(0,0));
+            }
+            return result
+        }
         let mut result = Vec::new();
         for i in 0..(self.sector.len() / 4) {
             result.push(AudioLeftRight(i16::from_le_bytes([self.sector[i * 4], self.sector[i * 4 + 1]]),i16::from_le_bytes([self.sector[i * 4 + 2], self.sector[i * 4 + 3]])));
@@ -456,7 +463,7 @@ impl Disc {
             Some((track,file,file_path)) => {
                 track_number = Some(track.track_number());
                 debug!("Reading sector {} from track {} in '{}'",msf,track.track_number(),file_path.display());
-                let mut sector = DataSector::empty(msf.to_lba());
+                let mut sector = DataSector::empty(track.track_number());
                 match track.read_sector_into(file, msf, &mut sector.sector) {
                     Ok(true) => Some(sector),
                     Ok(false) => {
