@@ -14,6 +14,7 @@ use std::rc::Rc;
 use tracing::{debug, info, warn};
 use crate::core::cdrom::CDRom;
 use crate::core::clock::{Clock, ClockConfig};
+use crate::core::config::Config;
 use crate::core::mdec::MDec;
 use crate::core::spu::Spu;
 
@@ -188,6 +189,7 @@ impl InterruptController for Bus {
 
 impl Bus {
     pub fn new(clock_config:ClockConfig,
+               config:&Config,
                bios: ArrayMemory,
                dma: &Rc<RefCell<DMAController>>,
                gpu: &Rc<RefCell<GPU>>,
@@ -208,7 +210,7 @@ impl Bus {
             cdrom: cdrom.clone(),
             spu: spu.clone(),
             mdec: mdec.clone(),
-            sio0: SIO0::new(true,true),
+            sio0: SIO0::new(true,true,config.controllers.tx_rx_cycles),
             io_ports: [0;IO_PORTS_LEN],
             scratchpad: vec![0; 0x400],
             cache_control_reg: 0,
