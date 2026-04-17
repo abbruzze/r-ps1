@@ -87,7 +87,7 @@ impl CDRom {
                     report[4] = if report_absolute { time.s() } else { time.s() + 0x80 };
                     report[5] = time.f();
                     // TODO peak values
-                    //info!("CDROM Sending play report: {:?} is_absolute={report_absolute} time={:?} track={:?}",report,time,track);
+                    debug!("CDROM Sending play report: {:?} is_absolute={report_absolute} time={:?} track={:?}",report,time,track);
                 }
 
                 for e in report.iter_mut() {

@@ -215,9 +215,11 @@ impl CDRom {
     }
 
     fn get_approx_seek_cycles_44100(&self, from: &DiscTime, target: &DiscTime) -> usize {
+        const MIN_SEEK_TIME_44100: usize = 24;
         let distance = (from.to_lba() as i32 - target.to_lba() as i32).abs() as u64;
         let seek_time_ms = 1000.0 * distance as f32 / (75.0 * 60.0 * 80.0); // 1000ms per minute, 75 frames per second, 80 sectors per frame
-        self.get_cycles_per_ms_44100(seek_time_ms).max(5)
+        self.get_cycles_per_ms_44100(seek_time_ms).max(MIN_SEEK_TIME_44100)
+
     }
 
     #[inline(always)]
@@ -253,12 +255,17 @@ impl CDRom {
         self.activate_motor(true);
 
         if let Some(disc) = self.disc.as_mut() {
-            self.drive_state = DriveState::Playing { sample_index: 0, report_counter: 1, report_absolute: true };
+            if !matches!(self.drive_state,DriveState::Playing { .. }) { // fixes motorhead
+                self.drive_state = DriveState::Playing { sample_index: 0, report_counter: 1, report_absolute: true };
+            }
             let mut track = BCD::decode(self.parameter_fifo.pop_front().unwrap_or(0));
             if track == 0 {
                 if let Some(loc) = self.pending_setloc.take() {
                     info!("CDROM play seeking {:?}",loc);
                     disc.seek_sector(loc);
+                }
+                else {
+                    debug!("CDROM play requested track 0 => playing from current track {:?}",disc.get_current_track().map(|t|t.track_number()));
                 }
             }
             else {
@@ -463,7 +470,7 @@ impl CDRom {
             // preserve last sector size bit
             self.mode = (self.mode & !(1 << 5)) | (prev_mode & (1 << 5));
         }
-        info!("CDROM set mode to {:02X}, speed={:?} sector size={:?} ignore_bit={ignore_bit} cd-da:{}",self.mode,self.get_speed(),self.get_sector_size(),(self.mode & 1) != 0);
+        info!("CDROM set mode to {:02X}, speed={:?} sector size={:?} ignore_bit={ignore_bit} cd-da:{} report={}",self.mode,self.get_speed(),self.get_sector_size(),(self.mode & 1) != 0,(self.mode & 4) != 0);
         self.make_stat_response(INT3, Command::SetMode)
     }
     // ReadN/S - Command 06h --> INT3(stat) --> INT1(stat) --> datablock
