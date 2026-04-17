@@ -146,8 +146,8 @@ struct DMAChannel {
     device: Rc<RefCell<dyn DmaDevice>>,
     sync_mode: SyncMode,
     transfer_direction: TransferDirection,
-    pub remaining_words: u16,
-    pub remaining_blocks: u16,
+    pub remaining_words: u32,
+    pub remaining_blocks: u32,
     waiting_next_block: bool,
     chopping_window_words: usize,
     chopping_window_cycles: usize,
@@ -517,13 +517,16 @@ impl DMAChannel {
     fn update_remaining_blocks_words(&mut self,only_words:bool) {
         match self.sync_mode {
             SyncMode::Manual => {
-                self.remaining_words = (self.bcr & 0xFFFF) as u16;
+                self.remaining_words = self.bcr & 0xFFFF;
+                if self.remaining_words == 0 {
+                    self.remaining_words = 0x10000;
+                }
                 self.remaining_blocks = 0;
             }
             SyncMode::Slice => {
-                self.remaining_words = (self.bcr & 0xFFFF) as u16;
+                self.remaining_words = self.bcr & 0xFFFF;
                 if !only_words {
-                    self.remaining_blocks = (self.bcr >> 16) as u16;
+                    self.remaining_blocks = self.bcr >> 16;
                 }
             }
             SyncMode::LinkedList | SyncMode::Reserved => {
@@ -777,7 +780,7 @@ impl DMAController {
                     if self.channels[channel].is_ready() {
                         dma_cycles = self.channels[channel].get_cycles_per_word();
                         channel_found = Some(channel);
-                        debug!("DMA found channel to activate: #{channel} words={} blocks={}",self.channels[channel].remaining_words,self.channels[channel].remaining_blocks);
+                        debug!("DMA found channel to activate: #{channel} mode={:?} words={} blocks={}",self.channels[channel].sync_mode,self.channels[channel].remaining_words,self.channels[channel].remaining_blocks);
                         break;
                     }
                 }
@@ -803,8 +806,9 @@ impl DMAController {
                 if matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
-                    debug!("DMA channel #{} transfer completed, IRQ set",channel_in_progress);
                 }
+                debug!("DMA channel #{} transfer completed",channel_in_progress);
+
                 self.dma_in_progress_on_channel = None;
                 false
             }
@@ -812,8 +816,8 @@ impl DMAController {
                 if ((last_block && matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete)) || matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete)) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
-                    debug!("DMA channel #{} block{} completed, IRQ set",channel_in_progress,if last_block {" (last block)"} else {""});
                 }
+                debug!("DMA channel #{} block{} completed",channel_in_progress,if last_block {" (last block)"} else {""});
 
                 if last_block {
                     self.dma_in_progress_on_channel = None;
