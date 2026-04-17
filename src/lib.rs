@@ -2,3 +2,4 @@ pub mod core;
 pub mod log;
 pub mod renderer;
 pub mod audio;
+pub mod cheats;

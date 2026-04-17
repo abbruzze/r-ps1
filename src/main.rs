@@ -10,6 +10,7 @@ mod core;
 mod log;
 mod renderer;
 mod audio;
+mod cheats;
 
 #[derive(Parser)]
 #[command(version, about = "Rust Playstation 1 emulator", long_about = None)]

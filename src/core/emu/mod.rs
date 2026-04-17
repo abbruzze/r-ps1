@@ -27,6 +27,7 @@ use std::{fs, thread};
 use std::path::{Path, PathBuf};
 use thread::spawn;
 use tracing::{error, info, warn};
+use crate::cheats::Cheats;
 use crate::core::bios::PS1_BIOS_SET;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
@@ -160,6 +161,15 @@ impl Emulator {
             last_cd_op: CDOperation::Idle,
             config,
         };
+
+        // cheats
+        if emu.config.cheats_config.cheats_enabled {
+            info!("Cheats enabled:");
+            let cheats = Cheats::parse(&emu.config.cheats_config.cheats_codes);
+            for cheat in cheats.cheats.iter() {
+                info!("{:?}",cheat);
+            }
+        }
 
         emu
     }

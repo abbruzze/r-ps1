@@ -441,6 +441,12 @@ pub struct CdromConfig {
     pub show_cdrom_access: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CheatsConfig {
+    pub cheats_enabled: bool,
+    pub cheats_codes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Config {
     #[serde(skip)]
@@ -456,6 +462,7 @@ pub struct Config {
     pub log_config: LogConfig,
     pub gpu_config: GPUConfig,
     pub cdrom_config: CdromConfig,
+    pub cheats_config: CheatsConfig,
 }
 
 impl Config {
