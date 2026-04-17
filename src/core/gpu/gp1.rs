@@ -75,6 +75,7 @@ impl GPU {
         debug!("GP1(01) Reset command buffer and CLUT cache");
         self.cmd_fifo.clear();
         self.gp0_fifo.clear();
+        self.gp0state = Gp0State::WaitingCommand;
         self.ready_bits.ready_to_receive_cmd_word = true;
         // TODO clear CLUT cache
     }
