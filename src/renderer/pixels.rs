@@ -621,6 +621,10 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                         let _ = self.gui_event_tx.send(GUIEvent::Mute);
                         return;
                     }
+                    if keycode == KeyCode::F4 && !self.last_key {
+                        let _ = self.gui_event_tx.send(GUIEvent::Cheat);
+                        return;
+                    }
                     match self.config.controllers.controller_1.controller_keymap.map_key(keycode) {
                         Some(button) => {
                             let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key));

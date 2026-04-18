@@ -97,6 +97,8 @@ pub struct Emulator {
     perf: Perf,
     last_cd_op: CDOperation,
     config:Config,
+    cheats: Cheats,
+    cheats_on: bool,
 }
 
 impl Emulator {
@@ -139,7 +141,7 @@ impl Emulator {
         let dma = Rc::new(RefCell::new(DMAController::new(&devices)));
         let bus = Bus::new(ClockConfig::NTSC,&config,bios,&dma,&gpu,&cdrom,&mdec,&spu);
 
-        let emu = Self {
+        let mut emu = Self {
             cpu,bus,
             gpu,
             cdrom,
@@ -160,6 +162,8 @@ impl Emulator {
             perf: Perf::new(Duration::from_millis(4000)),
             last_cd_op: CDOperation::Idle,
             config,
+            cheats: Cheats::new(),
+            cheats_on: false,
         };
 
         // cheats
@@ -169,6 +173,8 @@ impl Emulator {
             for cheat in cheats.cheats.iter() {
                 info!("{:?}",cheat);
             }
+            
+            emu.cheats = cheats;
         }
 
         emu
@@ -352,6 +358,10 @@ impl Emulator {
                 if self.new_frame {
                     self.check_input();
                     self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(self.last_cd_op.clone());
+                    // cheats
+                    if self.config.cheats_config.cheats_enabled && self.cheats_on {
+                        self.cheats.apply(&mut self.bus);
+                    }
                 }
             }
             EventType::Timer0 => {
@@ -421,6 +431,10 @@ impl Emulator {
                 }
                 GUIEvent::InsertDisc(disc_path) => {
                     self.load_disc(&disc_path.to_string_lossy().to_string(),false);
+                }
+                GUIEvent::Cheat => {
+                    self.cheats_on ^= true;
+                    info!("Cheating is {}",self.cheats_on);
                 }
             }
         }
