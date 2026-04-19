@@ -14,7 +14,7 @@ use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Icon, Window, WindowId};
+use winit::window::{Fullscreen, Icon, Window, WindowId};
 use crate::core::emu::EMU_NAME;
 use crate::core::cdrom::Region;
 use crate::core::config::Config;
@@ -279,11 +279,12 @@ struct PixelsRenderer {
     resize_adjust_pending: bool,
     last_window_size: Option<PhysicalSize<u32>>,
     iconified: bool,
+    full_screen: bool,
 }
 
 impl PixelsRenderer {
     pub fn new(scale: usize,gui_event_tx: mpsc::Sender<GUIEvent>,config: Config) -> Self {
-        let renderer = Self {
+        let mut renderer = Self {
             window: None,
             pixels: None,
             width : DEFAULT_WIDTH,
@@ -310,33 +311,36 @@ impl PixelsRenderer {
             resize_adjust_pending: false,
             last_window_size: None,
             iconified: false,
+            full_screen: false,
         };
+
+        renderer.full_screen = renderer.config.gpu_config.start_full_screen;
 
         if let Some(renderer_type) = renderer.config.gpu_config.rendering_type.as_ref() {
             match renderer_type.to_uppercase().as_str() {
                 "NEAREST" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
                 }
                 "BOX" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Box));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Box));
                 }
                 "BILINEAR" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
                 }
                 "HAMMING" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
                 }
                 "BICUBIC" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
                 }
                 "MITCHELL" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Mitchell));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Mitchell));
                 }
                 "GAUSSIAN" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Gaussian));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Gaussian));
                 }
                 "LANCZOS3" => {
-                    renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
+                    renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
                 }
                 _ => {
                     error!("Unrecognized rendering type: {}",renderer_type);
@@ -511,6 +515,10 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         let window = event_loop.create_window(window_attrs).unwrap();
         let window_ref: &'static Window = Box::leak(Box::new(window));
 
+        if self.full_screen {
+            window_ref.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+
         // Crea pixels
         let window_size = window_ref.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height,window_ref);
@@ -602,29 +610,46 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             WindowEvent::KeyboardInput { event, .. } => {
                 self.last_key = event.state.is_pressed();
                 if let PhysicalKey::Code(keycode) = event.physical_key {
-                    // check warp mode
-                    if keycode == KeyCode::F1 && !self.last_key {
-                        let _ = self.gui_event_tx.send(GUIEvent::WarpMode);
-                        return;
+                    // check user commands
+                    if !self.last_key {
+                        match keycode {
+                            KeyCode::F1 => { // check warp mode
+                                let _ = self.gui_event_tx.send(GUIEvent::WarpMode);
+                                return;
+                            }
+                            KeyCode::Space => { // check pause mode
+                                let _ = self.gui_event_tx.send(GUIEvent::Paused);
+                                return;
+                            }
+                            KeyCode::F2 => { // check vram debug mode
+                                let _ = self.gui_event_tx.send(GUIEvent::VRAMDebugMode);
+                                return;
+                            }
+                            KeyCode::F3 => { // check mute mode
+                                let _ = self.gui_event_tx.send(GUIEvent::Mute);
+                                return;
+                            }
+                            KeyCode::F4 => { // check cheat mode
+                                let _ = self.gui_event_tx.send(GUIEvent::Cheat);
+                                return;
+                            }
+                            KeyCode::F10 => { // check fullscreen mode
+                                self.full_screen ^= true;
+                                if self.full_screen {
+                                    self.window.unwrap().set_fullscreen(Some(Fullscreen::Borderless(None)));
+                                }
+                                else {
+                                    self.window.unwrap().set_fullscreen(None);
+                                }
+                            }
+                            KeyCode::Escape if self.full_screen => {
+                                self.window.unwrap().set_fullscreen(None);
+                                self.full_screen = false;
+                            }
+                            _ => {}
+                        }
                     }
-                    // check pause mode
-                    if keycode == KeyCode::Space && !self.last_key {
-                        let _ = self.gui_event_tx.send(GUIEvent::Paused);
-                        return;
-                    }
-                    // check vram debug mode
-                    if keycode == KeyCode::F2 && !self.last_key {
-                        let _ = self.gui_event_tx.send(GUIEvent::VRAMDebugMode);
-                        return;
-                    }
-                    if keycode == KeyCode::F3 && !self.last_key {
-                        let _ = self.gui_event_tx.send(GUIEvent::Mute);
-                        return;
-                    }
-                    if keycode == KeyCode::F4 && !self.last_key {
-                        let _ = self.gui_event_tx.send(GUIEvent::Cheat);
-                        return;
-                    }
+
                     match self.config.controllers.controller_1.controller_keymap.map_key(keycode) {
                         Some(button) => {
                             let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key));

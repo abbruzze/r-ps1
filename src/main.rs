@@ -36,6 +36,9 @@ struct Args {
     /// Log file
     #[arg(long, value_name = "FILE")]
     log_file: Option<PathBuf>,
+    /// Full screen enabled
+    #[arg(long)]
+    full_screen: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -109,6 +112,10 @@ fn main() {
     // debugger
     if args.debugger {
         config.debugger_enabled = true;
+    }
+    // full screen
+    if args.full_screen {
+        config.gpu_config.start_full_screen = true;
     }
 
     let bios_path = Path::new(config.bios_path.as_deref().unwrap());

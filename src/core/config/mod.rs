@@ -434,6 +434,7 @@ impl Default for LogConfig {
 pub struct GPUConfig {
     pub command_delay_enabled: bool,
     pub rendering_type: Option<String>,
+    pub start_full_screen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
