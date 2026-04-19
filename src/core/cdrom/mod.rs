@@ -156,16 +156,18 @@ enum CommandState {
 #[derive(Debug,Clone)]
 enum DriveState {
     Idle,
-    Playing { sample_index:isize, report_counter:usize, report_absolute: bool },
+    Playing { sample_index:usize, report_counter:usize, report_absolute: bool, seeking_cycles: usize },
     Seeking,
-    Reading { next_sector_cycles: usize },
+    Reading { next_sector_cycles: usize, seeking_cycles: usize },
 }
 
 impl DriveState {
     fn to_u8(&self) -> u8 {
         match self {
-            DriveState::Playing{ .. } => 0x80,
+            DriveState::Playing { seeking_cycles, .. } if *seeking_cycles > 0 => 0x40,
+            DriveState::Reading { seeking_cycles, .. } if *seeking_cycles > 0 => 0x40,
             DriveState::Seeking => 0x40,
+            DriveState::Playing { .. } => 0x80,
             DriveState::Reading{ .. } => 0x20,
             _ => 0x00,
         }

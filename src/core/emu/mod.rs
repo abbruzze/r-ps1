@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use std::{fs, thread};
 use std::path::{Path, PathBuf};
 use thread::spawn;
+use regex::Regex;
 use tracing::{error, info, warn};
 use crate::cheats::Cheats;
 use crate::core::bios::PS1_BIOS_SET;
@@ -249,7 +250,9 @@ impl Emulator {
                         .unwrap()
                         .to_string_lossy()
                         .to_string();
-                    self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(CDOperation::DiscLoading(name));
+                    let re = Regex::new(r"\([^)]*\)").unwrap();
+                    let name_without_parenthesis = re.replace_all(&name, "").to_string();
+                    self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(CDOperation::DiscLoading(name_without_parenthesis));
                 }
                 Err(e) => {
                     error!("Error while loading disc: {:?}",e);

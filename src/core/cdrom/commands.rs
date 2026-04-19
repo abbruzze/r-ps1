@@ -32,23 +32,29 @@ impl CDRom {
     pub(super) fn check_drive_state(&mut self, irq_handler: &mut IrqHandler) {
         let new_state = match self.drive_state.clone() {
             DriveState::Idle => DriveState::Idle,
-            DriveState::Playing { sample_index, report_counter, report_absolute } if sample_index < 0 => {
-                DriveState::Playing { sample_index: sample_index + 1, report_counter, report_absolute }
-            }
-            DriveState::Playing { sample_index, report_counter, report_absolute } => {
-                self.play_sample(sample_index,report_counter,report_absolute,irq_handler)
-            },
-            DriveState::Seeking => DriveState::Seeking,
-            DriveState::Reading { next_sector_cycles } => {
-                // update adpcm sample
-                if let Some((sample_l, sample_r)) = self.adpcm.maybe_output_sample() {
-                    self.audio_sample = AudioLeftRight(sample_l, sample_r);
-                }
-                if next_sector_cycles == 1 {
-                    self.keep_reading_sector(irq_handler)
+            DriveState::Playing { sample_index, report_counter, report_absolute , seeking_cycles } => {
+                if seeking_cycles > 1 {
+                    DriveState::Playing { sample_index, report_counter, report_absolute , seeking_cycles: seeking_cycles - 1 }
                 }
                 else {
-                    DriveState::Reading { next_sector_cycles: next_sector_cycles - 1 }
+                    self.play_sample(sample_index, report_counter, report_absolute, irq_handler)
+                }
+            },
+            DriveState::Seeking => DriveState::Seeking,
+            DriveState::Reading { next_sector_cycles , seeking_cycles } => {
+                if seeking_cycles > 1 {
+                    DriveState::Reading { next_sector_cycles, seeking_cycles: seeking_cycles - 1 }
+                }
+                else {
+                    // update adpcm sample
+                    if let Some((sample_l, sample_r)) = self.adpcm.maybe_output_sample() {
+                        self.audio_sample = AudioLeftRight(sample_l, sample_r);
+                    }
+                    if next_sector_cycles == 1 {
+                        self.keep_reading_sector(irq_handler)
+                    } else {
+                        DriveState::Reading { next_sector_cycles: next_sector_cycles - 1, seeking_cycles: 0 }
+                    }
                 }
             }
         };
@@ -214,16 +220,16 @@ impl CDRom {
         )
     }
 
-    fn get_approx_seek_cycles_44100(&self, from: &DiscTime, target: &DiscTime) -> usize {
+    fn get_approx_seek_cycles_44100(from: &DiscTime, target: &DiscTime) -> usize {
         const MIN_SEEK_TIME_44100: usize = 24;
         let distance = (from.to_lba() as i32 - target.to_lba() as i32).abs() as u64;
         let seek_time_ms = 1000.0 * distance as f32 / (75.0 * 60.0 * 80.0); // 1000ms per minute, 75 frames per second, 80 sectors per frame
-        self.get_cycles_per_ms_44100(seek_time_ms).max(MIN_SEEK_TIME_44100)
+        Self::get_cycles_per_ms_44100(seek_time_ms).max(MIN_SEEK_TIME_44100)
 
     }
 
     #[inline(always)]
-    fn get_cycles_per_ms_44100(&self, ms: f32) -> usize {
+    fn get_cycles_per_ms_44100(ms: f32) -> usize {
         ((44100.0 / 1000.0 * ms) as usize).max(1)
     }
 
@@ -255,17 +261,16 @@ impl CDRom {
         self.activate_motor(true);
 
         if let Some(disc) = self.disc.as_mut() {
-            if !matches!(self.drive_state,DriveState::Playing { .. }) { // fixes motorhead
-                self.drive_state = DriveState::Playing { sample_index: 0, report_counter: 1, report_absolute: true };
-            }
+            let mut seeking_cycles = 0usize;
             let mut track = BCD::decode(self.parameter_fifo.pop_front().unwrap_or(0));
             if track == 0 {
-                if let Some(loc) = self.pending_setloc.take() {
-                    info!("CDROM play seeking {:?}",loc);
-                    disc.seek_sector(loc);
-                }
-                else {
-                    debug!("CDROM play requested track 0 => playing from current track {:?}",disc.get_current_track().map(|t|t.track_number()));
+                match self.pending_setloc.take() {
+                    Some(loc) => {
+                        seeking_cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
+                        info!("CDROM seeking before playing {:?}",loc);
+                        disc.seek_sector(loc);
+                    }
+                    _ => {}
                 }
             }
             else {
@@ -274,6 +279,9 @@ impl CDRom {
                 let start_time = t.effective_start_time();
                 disc.seek_sector(start_time);
 
+            }
+            if !matches!(self.drive_state,DriveState::Playing { .. }) { // fixes motorhead
+                self.drive_state = DriveState::Playing { sample_index: 0, report_counter: 1, report_absolute: true, seeking_cycles };
             }
             info!("CDROM play track {track} at loc {:?}",disc.get_head_position());
 
@@ -299,7 +307,7 @@ impl CDRom {
             self.activate_motor(true);
             let seek_cycles = match (self.disc.as_ref(), self.pending_setloc.as_ref()) {
                 (Some(disc), Some(loc)) => {
-                    let cycles = self.get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
+                    let cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
                     info!("CDROM seekl from {:?} to {:?} approx cycles={}",disc.get_head_position(),loc,cycles);
                     cycles
                 },
@@ -476,8 +484,18 @@ impl CDRom {
     // ReadN/S - Command 06h --> INT3(stat) --> INT1(stat) --> datablock
     fn command_read(&mut self,second_response:bool) -> CommandState {
         if second_response {
-            let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
-            self.change_drive_state(DriveState::Reading { next_sector_cycles });
+            let mut seeking_cycles = 0usize;
+            match (self.disc.as_mut(),self.pending_setloc.take()) {
+                (Some(disc),Some(loc)) => {
+                    seeking_cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
+                    info!("CDROM seeking before reading {:?}",loc);
+                    disc.seek_sector(loc);
+                }
+                _ => {}
+            }
+            let next_sector_cycles = Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
+            info!("CDROM reading next sector in {next_sector_cycles} cycles seeking cycles {seeking_cycles} [{} ms]",self.get_speed().get_read_sector_ms());
+            self.change_drive_state(DriveState::Reading { next_sector_cycles, seeking_cycles });
             CommandState::Idle
         }
         else if self.is_disk_inserted() {
@@ -506,14 +524,14 @@ impl CDRom {
         }
 
         let send_int1 = self.read_data_sector(irq_handler);
-        let next_sector_cycles = self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
+        let next_sector_cycles = Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
         if send_int1 {
             debug!("CDROM reading sending INT1");
             self.apply_irq_and_result(Command::Read,INT1, vec![self.get_stat(false, false, false)], irq_handler);
         }
 
         debug!("CDROM reading next sector in {} cycles",next_sector_cycles);
-        DriveState::Reading { next_sector_cycles }
+        DriveState::Reading { next_sector_cycles, seeking_cycles: 0 }
     }
     // Pause - Command 09h --> INT3(stat) --> INT2(stat)
     fn command_pause(&mut self, second_response: bool) -> CommandState {
@@ -529,7 +547,7 @@ impl CDRom {
                 STAT_NO_ERR,
                 CommandState::Delay {
                     cmd: Command::Pause,
-                    delay_cycles: 5 * self.get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms()),
+                    delay_cycles: 5 * Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms()),
                     next_state: Box::new(
                         CommandState::Response2 { cmd: Command::Pause }
                     )
@@ -743,7 +761,7 @@ impl CDRom {
 
     // =========================================
 
-    fn play_sample(&mut self,mut sample_index:isize,mut report_counter:usize, mut report_absolute: bool,irq_handler:&mut IrqHandler) -> DriveState {
+    fn play_sample(&mut self,mut sample_index:usize,mut report_counter:usize, mut report_absolute: bool,irq_handler:&mut IrqHandler) -> DriveState {
         if sample_index == 0 {
             self.read_audio_sector(report_counter == 1,report_absolute,irq_handler);
             if report_counter == 1 {
@@ -754,14 +772,14 @@ impl CDRom {
                 report_counter -= 1;
             }
         }
-        let AudioLeftRight(left,right) = &self.last_audio_sector[sample_index as usize];
+        let AudioLeftRight(left,right) = &self.last_audio_sector[sample_index];
         self.audio_sample = AudioLeftRight(*left,*right);
 
         sample_index += 1;
-        if sample_index as usize == self.last_audio_sector.len() {
+        if sample_index == self.last_audio_sector.len() {
             sample_index = 0;
         }
 
-        DriveState::Playing { sample_index, report_counter, report_absolute }
+        DriveState::Playing { sample_index, report_counter, report_absolute, seeking_cycles: 0 }
     }
 }
