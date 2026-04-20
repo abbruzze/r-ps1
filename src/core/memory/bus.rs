@@ -886,13 +886,15 @@ impl Memory for Bus {
                     warn!("Fetching from scratchpad");
                     ReadMemoryAccess::BusError
                 }
-                else if offset < 0x400 {
-                    let read = <Self as Memory>::mem_read::<SIZE>(offset,&self.scratchpad);
+                else {
+                //else if offset < 0x400 {
+                    // masking the offset with 0x3FF fixed Crash Bandicoot 3
+                    let read = <Self as Memory>::mem_read::<SIZE>(offset & 0x3FF,&self.scratchpad);
                     ReadMemoryAccess::Read(read,SCRATCHPAD_READ_CYCLES)
-                }
+                /*}
                 else {
                     warn!("Reading from an unmapped scratchpad address: {:08X}",address);
-                    ReadMemoryAccess::BusError
+                    ReadMemoryAccess::BusError*/
                 }
             },
             // BIOS ======================================================================================
