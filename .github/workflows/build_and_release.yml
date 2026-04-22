@@ -59,14 +59,12 @@ jobs:
           mkdir bundle
           cp target/fast/r-ps1 bundle/
           chmod +x bundle/r-ps1
-          cd bundle && zip -r ../r-ps1-${{ needs.prepare.outputs.version }}-linux.zip .
 
       - name: Prepare bundle (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           mkdir bundle
           copy target\fast\r-ps1.exe bundle\
-          powershell Compress-Archive -Path bundle\* -DestinationPath r-ps1-${{ needs.prepare.outputs.version }}-windows.zip
 
       # 🧪 Artifact (branch only)
       - name: Upload artifact
@@ -74,8 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r-ps1-${{ needs.prepare.outputs.version }}-${{ matrix.os }}
-          path: |
-            *.zip
+          path: bundle/
 
       # 📝 Changelog
       - name: Generate changelog
