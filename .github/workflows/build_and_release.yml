@@ -88,6 +88,9 @@ jobs:
         with:
           path: artifacts/
 
+      - name: Debug artifacts
+        run: find artifacts/ -type f
+
       - name: Generate changelog
         id: changelog
         run: |
@@ -99,6 +102,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.CHANGELOG }}
-          files: artifacts/**/*.zip
+          files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
