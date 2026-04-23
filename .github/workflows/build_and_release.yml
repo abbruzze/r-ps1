@@ -66,28 +66,37 @@ jobs:
           mkdir bundle
           copy target\fast\r-ps1.exe bundle\
 
-      # 🧪 Artifact (branch only)
+      # 🧪 Artifact
       - name: Upload artifact
-        if: github.ref_type == 'branch'
         uses: actions/upload-artifact@v4
         with:
           name: r-ps1-${{ needs.prepare.outputs.version }}-${{ matrix.os }}
           path: bundle/
 
-      # 📝 Changelog
+  release:
+    needs: [prepare, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
       - name: Generate changelog
-        if: github.ref_type == 'tag'
         id: changelog
         run: |
           echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
           git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 🚀 Release (tag only)
       - name: Create Release
-        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.CHANGELOG }}
-          files: |
-            bundle/*.zip
+          files: artifacts/**/*.zip
