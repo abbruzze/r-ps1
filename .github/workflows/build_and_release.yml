@@ -90,5 +90,4 @@ jobs:
         with:
           body: ${{ steps.changelog.outputs.CHANGELOG }}
           files: |
-            r-ps1-${{ needs.prepare.outputs.version }}-linux.zip
-            r-ps1-${{ needs.prepare.outputs.version }}-windows.zip
+            bundle/*.zip
