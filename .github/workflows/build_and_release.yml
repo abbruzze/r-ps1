@@ -100,3 +100,5 @@ jobs:
         with:
           body: ${{ steps.changelog.outputs.CHANGELOG }}
           files: artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
