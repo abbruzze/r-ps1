@@ -71,6 +71,12 @@ impl DiscTime {
     }
 }
 
+impl fmt::Display for DiscTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:02}:{:02}:{:02}", self.minutes, self.seconds,self.frames)
+    }
+}
+
 impl Into<u32> for DiscTime {
     fn into(self) -> u32 {
         self.to_lba()
@@ -94,12 +100,6 @@ impl PartialOrd<Self> for DiscTime {
 impl Ord for DiscTime {
     fn cmp(&self, other: &Self) -> Ordering {
         self.to_lba().cmp(&other.to_lba())
-    }
-}
-
-impl fmt::Display for DiscTime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DiscTime({:02}:{:02}:{:02})", self.minutes, self.seconds,self.frames)
     }
 }
 

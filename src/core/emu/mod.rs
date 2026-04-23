@@ -342,8 +342,8 @@ impl Emulator {
             let events_to_process = self.bus.get_clock_mut().next_events();
             for event in events_to_process {
                 self.process_event(event,&mut irq_handler);
-                irq_handler.forward_to_controller(&mut self.bus);
             }
+            irq_handler.forward_to_controller(&mut self.bus);
         }
     }
 

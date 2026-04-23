@@ -15,9 +15,9 @@ pub(super) const STAT_NO_DATA : &[u8] = &[];
 
 pub(super) const FIRST_RESPONSE_IRQ_DELAY_44100 : usize = 1;
 pub(super) const STD_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = delay_cycles_44100(0x4A73);
-pub(super) const INIT_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = delay_cycles_44100(900_000);
-pub(super) const GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100: usize = STD_SECOND_RESPONSE_IRQ_DELAY_44100;
-pub(super) const READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100: usize = STD_SECOND_RESPONSE_IRQ_DELAY_44100;
+pub(super) const INIT_SECOND_RESPONSE_IRQ_DELAY_44100 : usize = 2000;
+pub(super) const GET_ID_SECOND_RESPONSE_IRQ_DELAY_44100: usize = 2000;
+pub(super) const READ_TOC_SECOND_RESPONSE_IRQ_DELAY_44100: usize = 2000;
 
 const fn delay_cycles_44100(cycles:usize) -> usize {
     cycles / (33_868_800 / 44_100)
@@ -132,8 +132,12 @@ impl CDRom {
 
     pub(super) fn apply_irq_and_result(&mut self,cmd:Command, irq: u8, response: Vec<u8>, irq_handler: &mut IrqHandler) {
         debug!("CDROM applying irq {:02X} with response {:?} for command {cmd:?}",irq,response);
+        if self.is_irq_pending() {
+            warn!("CDROM IRQ already pending: pending={} new={irq}",self.hintsts_reg & 7);
+        }
         self.set_irq(irq);
         self.check_irq(irq_handler);
+        self.result_fifo.clear();
         for b in response {
             self.result_fifo.push_back(b);
         }
@@ -249,7 +253,7 @@ impl CDRom {
 
         if let Some(loc) = DiscTime::new_checked(min, sec, frame) {
             self.pending_setloc = Some(loc);
-            info!("CDROM setloc to {:?}",loc);
+            info!("CDROM setloc to {}",loc);
             self.make_stat_response(INT3, Command::Setloc)
         } else {
             error!("CDROM invalid setloc {:02X}:{:02X}:{:02X}",min,sec,frame);
@@ -267,7 +271,7 @@ impl CDRom {
                 match self.pending_setloc.take() {
                     Some(loc) => {
                         seeking_cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
-                        info!("CDROM seeking before playing {:?}",loc);
+                        info!("CDROM seeking before playing {}",loc);
                         disc.seek_sector(loc);
                     }
                     _ => {}
@@ -294,7 +298,7 @@ impl CDRom {
     // SeekL - Command 15h --> INT3(stat) --> INT2(stat)
     fn command_seek(&mut self, second_response: bool) -> CommandState {
         if second_response {
-            info!("CDROM seeking loc {:?} completed",self.pending_setloc);
+            info!("CDROM seeking loc {} completed",self.pending_setloc.as_ref().map(|loc|loc.to_string()).unwrap_or_else(||"unknown".to_string()) );
             if let Some(disc) = self.disc.as_mut() {
                 if let Some(loc) = self.pending_setloc.take() {
                     disc.seek_sector(loc);
@@ -308,7 +312,7 @@ impl CDRom {
             let seek_cycles = match (self.disc.as_ref(), self.pending_setloc.as_ref()) {
                 (Some(disc), Some(loc)) => {
                     let cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
-                    info!("CDROM seekl from {:?} to {:?} approx cycles={}",disc.get_head_position(),loc,cycles);
+                    info!("CDROM seekl from {} to {} approx cycles={}",disc.get_head_position(),loc,cycles);
                     cycles
                 },
                 _ => FIRST_RESPONSE_IRQ_DELAY_44100
@@ -408,7 +412,7 @@ impl CDRom {
                         Command::GetID,
                         INT2,
                         FIRST_RESPONSE_IRQ_DELAY_44100,
-                        &[0x00, mode, 0x00, b'S', b'C', b'E', region],
+                                &[0x00, mode, 0x00, b'S', b'C', b'E', region],
                         STAT_NO_ERR,
                         CommandState::Idle
                     )
@@ -488,7 +492,7 @@ impl CDRom {
             match (self.disc.as_mut(),self.pending_setloc.take()) {
                 (Some(disc),Some(loc)) => {
                     seeking_cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
-                    info!("CDROM seeking before reading {:?}",loc);
+                    info!("CDROM seeking before reading {} -> {}",disc.get_head_position(),loc);
                     disc.seek_sector(loc);
                 }
                 _ => {}
@@ -500,8 +504,6 @@ impl CDRom {
         }
         else if self.is_disk_inserted() {
             self.activate_motor(true);
-            //self.data_buffer.clear(); // maybe ?
-            //self.make_stat_response(INT3, Command::Read)
             self.make_response(
                 Command::Read,
                 INT3,
@@ -519,7 +521,7 @@ impl CDRom {
         if let Some(loc) = self.pending_setloc.take() {
             if let Some(disc) = self.disc.as_mut() {
                 disc.seek_sector(loc);
-                info!("CDROM start reading from loc {:?} previous data in queue: {}",disc.get_head_position(),self.data_buffer.len());
+                info!("CDROM start reading from loc {} previous data in queue: {}",disc.get_head_position(),self.data_buffer.len());
             }
         }
 
@@ -547,7 +549,7 @@ impl CDRom {
                 STAT_NO_ERR,
                 CommandState::Delay {
                     cmd: Command::Pause,
-                    delay_cycles: 5 * Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms()),
+                    delay_cycles: 5 * Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms()), // time equals to about 5 sectors
                     next_state: Box::new(
                         CommandState::Response2 { cmd: Command::Pause }
                     )
@@ -579,7 +581,7 @@ impl CDRom {
                 STAT_NO_DATA,
                 STAT_NO_ERR,
                 CommandState::Delay {
-                    cmd: Command::Pause,
+                    cmd: Command::Init,
                     delay_cycles: INIT_SECOND_RESPONSE_IRQ_DELAY_44100,
                     next_state: Box::new(
                         CommandState::Response2 { cmd: Command::Init }
@@ -662,7 +664,7 @@ impl CDRom {
                 locp[5] = track_relative_time.m();
                 locp[6] = track_relative_time.s();
                 locp[7] = track_relative_time.f();
-                info!("CDROM getlocp absolute={:?} relative={:?} index={}",absolute_time,track_relative_time,locp[1]);
+                info!("CDROM getlocp absolute={} relative={} index={}",absolute_time,track_relative_time,locp[1]);
             }
             for e in locp.iter_mut() {
                 *e = BCD::encode(*e);
@@ -703,7 +705,7 @@ impl CDRom {
             match disc.get_track_by_number(track_n) {
                 Some(track) => {
                     let start_time = track.effective_start_time();
-                    info!("CDROM get_td track {}/{} start time {:?}",track_n,track.track_number(),start_time);
+                    info!("CDROM get_td track {}/{} start time {}",track_n,track.track_number(),start_time);
 
                     return self.make_response(
                         Command::GetTD,

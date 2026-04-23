@@ -466,14 +466,14 @@ impl DMAChannel {
         match self.sync_mode {
             SyncMode::Manual => {
                 if (self.chcr & 0x100) != 0 {
-                    self.remaining_words as u32
+                    self.remaining_words
                 }
                 else {
                     self.bcr
                 }
             }
             SyncMode::Slice => {
-                self.bcr & 0xFFFF | (self.remaining_blocks as u32) << 16
+                self.bcr & 0xFFFF | self.remaining_blocks << 16
             }
             SyncMode::LinkedList | SyncMode::Reserved => self.bcr,
         }
