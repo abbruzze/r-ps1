@@ -226,7 +226,7 @@ impl DmaDevice for CDRom {
         self.read_2::<32>()
     }
     fn dma_cycles_per_word(&self) -> usize {
-        1
+        24
     }
 }
 

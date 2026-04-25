@@ -33,6 +33,11 @@ impl DmaDevice for DummyDMAChannel {
     }
 }
 
+pub struct DMAState {
+    pub dma_in_progress: bool,
+    pub dma_cycles: usize,
+}
+
 #[derive(Debug)]
 enum SyncMode {
     Manual,
@@ -76,7 +81,7 @@ enum DMAResult {
     InProgress,
     LeaveBus,
     Finished,
-    BlockFinished(bool), // true = last block finished
+    BlockFinished(bool,usize), // true = last block finished
 }
 
 enum IrqDMAType {
@@ -226,7 +231,7 @@ impl DMAChannel {
             SyncMode::Slice => {
                 // verify if someone stopped the transfer
                 if !self.is_active() { // the transfer is not active anymore
-                    return DMAResult::BlockFinished(true);
+                    return DMAResult::BlockFinished(true,0);
                 }
                 self.do_dma_slice(bus,irq_handler)
             },
@@ -360,12 +365,12 @@ impl DMAChannel {
         self.remaining_blocks = self.remaining_blocks.wrapping_sub(1);
         if self.remaining_blocks == 0 {
             self.transfer_completed();
-            DMAResult::BlockFinished(true)
+            DMAResult::BlockFinished(true,(self.bcr & 0xFFFF) as usize)
         }
         else {
             self.update_remaining_blocks_words(true);
             self.waiting_next_block = true;
-            DMAResult::BlockFinished(false)
+            DMAResult::BlockFinished(false,(self.bcr & 0xFFFF) as usize)
         }
     }
     fn do_dma_linked_list(&mut self, bus: &mut Bus,irq_handler:&mut IrqHandler) -> DMAResult {
@@ -738,23 +743,27 @@ impl DMAController {
         self.reg_fc = value;
     }
 
-    pub fn do_dma_for_cpu_cycles(&mut self,cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
+    pub fn do_dma_for_cpu_cycles(&mut self,mut cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> DMAState {
         let mut dma_in_progress = false;
-        self.dma_pending_cycles = self.dma_pending_cycles.saturating_sub(cpu_cycles);
-        if self.dma_pending_cycles == 0 {
-            if self.dma_enabled {
-                for _ in 0..cpu_cycles {
-                    let (dma, cycles_done) = self.do_dma(bus, irq_handler);
-                    dma_in_progress |= dma;
-                    self.dma_pending_cycles += cycles_done;
-                    if self.dma_in_progress_on_channel.is_none() {
-                        break; // if no channel is in progress, exit, because nothing can happen to change dma settings
-                    }
+        let mut dma_cycles = 0usize;
+        
+        if self.dma_enabled {
+            while cpu_cycles > 0 {
+                let (dma, cycles_done) = self.do_dma(bus, irq_handler);
+                dma_in_progress |= dma;
+                if cpu_cycles >= cycles_done {
+                    cpu_cycles -= cycles_done;
+                }
+                else {
+                    dma_cycles = cycles_done - cpu_cycles;
+                    break;
+                }
+                if self.dma_in_progress_on_channel.is_none() {
+                    break; // if no channel is in progress, exit, because nothing can happen to change dma settings
                 }
             }
         }
-
-        dma_in_progress
+        DMAState { dma_in_progress, dma_cycles }
     }
     #[inline]
     fn is_changed(&self) -> bool {
@@ -812,12 +821,13 @@ impl DMAController {
                 self.dma_in_progress_on_channel = None;
                 false
             }
-            DMAResult::BlockFinished(last_block) => {
+            DMAResult::BlockFinished(last_block,words) => {
+                dma_cycles *= words;
                 if ((last_block && matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete)) || matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete)) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
                 }
-                debug!("DMA channel #{} block{} completed",channel_in_progress,if last_block {" (last block)"} else {""});
+                debug!("DMA channel #{} block{} completed [dma_cycles={dma_cycles}]",channel_in_progress,if last_block {" (last block)"} else {""});
 
                 if last_block {
                     self.dma_in_progress_on_channel = None;

@@ -137,7 +137,7 @@ impl CDRom {
         }
         self.set_irq(irq);
         self.check_irq(irq_handler);
-        self.result_fifo.clear();
+        //self.result_fifo.clear();
         for b in response {
             self.result_fifo.push_back(b);
         }
@@ -225,7 +225,7 @@ impl CDRom {
     }
 
     fn get_approx_seek_cycles_44100(from: &DiscTime, target: &DiscTime) -> usize {
-        const MIN_SEEK_TIME_44100: usize = 24;
+        const MIN_SEEK_TIME_44100: usize = 50;
         let distance = (from.to_lba() as i32 - target.to_lba() as i32).abs() as u64;
         let seek_time_ms = 1000.0 * distance as f32 / (75.0 * 60.0 * 80.0); // 1000ms per minute, 75 frames per second, 80 sectors per frame
         Self::get_cycles_per_ms_44100(seek_time_ms).max(MIN_SEEK_TIME_44100)

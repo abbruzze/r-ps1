@@ -8,7 +8,7 @@ use crate::core::cpu::{disassembler, Cpu};
 use crate::core::debugger;
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
 use crate::core::debugger::{DebuggerResponse, RunMode};
-use crate::core::dma::{DMAController, DmaDevice, DummyDMAChannel};
+use crate::core::dma::{DMAController, DMAState, DmaDevice, DummyDMAChannel};
 use crate::core::gpu::{VideoMode, GPU};
 use crate::core::interrupt::IrqHandler;
 use crate::core::mdec::{MDec, MDecIn, MDecOut};
@@ -328,7 +328,11 @@ impl Emulator {
                 self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress);
 
                 // DMA
-                self.dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
+                let DMAState { dma_in_progress,dma_cycles } = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
+                self.dma_in_progress = dma_in_progress;
+                if dma_cycles > 0 {
+                    self.bus.get_clock_mut().advance_time(dma_cycles as u64);
+                }
                 // IRQs
                 irq_handler.forward_to_controller(&mut self.bus);
 
