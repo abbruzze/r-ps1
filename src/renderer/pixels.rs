@@ -22,6 +22,7 @@ use crate::core::controllers::ControllerButton;
 use crate::core::emu::EMU_VERSION;
 
 static ICON_PNG: &[u8] = include_bytes!("../../resources/r-ps1_icon_32x32.png");
+static SPLASH_PNG: &[u8] = include_bytes!("../../resources/r-ps1_splash.png");
 
 const DEFAULT_WIDTH: usize = 640;
 const DEFAULT_HEIGHT: usize = 480;
@@ -538,7 +539,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         // Crea pixels
         let window_size = window_ref.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height,window_ref);
-        let mut builder = PixelsBuilder::new(DEFAULT_WIDTH as u32, DEFAULT_HEIGHT as u32, surface_texture);
+        let mut builder = PixelsBuilder::new(window_size.width, window_size.height, surface_texture);
         builder = builder.request_adapter_options(wgpu::RequestAdapterOptions {
             // 1 - GPU: Pick one or the other
             //power_preference: wgpu::PowerPreference::LowPower,
@@ -548,6 +549,14 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         });
         let mut pixels = builder.build().expect("create pixels");
         pixels.set_present_mode(wgpu::PresentMode::Immediate); // can be changed to Fifo for VSync
+        pixels.frame_mut().fill(0);
+
+        let image_src = image::load_from_memory(SPLASH_PNG).unwrap();
+        let splash_image = image_src.resize(window_size.width, window_size.height, image::imageops::FilterType::Nearest);
+        pixels.resize_buffer(splash_image.width(), splash_image.height()).unwrap();
+        let frame_buffer = pixels.frame_mut();
+        frame_buffer.copy_from_slice(&splash_image.to_rgba8().into_raw());
+        pixels.render().unwrap();
 
         self.window = Some(window_ref);
         self.pixels = Some(pixels);
