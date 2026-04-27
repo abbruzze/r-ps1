@@ -272,6 +272,7 @@ struct PixelsRenderer {
     last_performance: u16,
     last_cd_access: Option<CDOperation>,
     disc_name: Option<String>,
+    disc_unzipping: Option<String>,
     region: Region,
     pending_region_change: Option<Region>,
     image_resizer: Resizer,
@@ -304,6 +305,7 @@ impl PixelsRenderer {
             last_performance: 0,
             last_cd_access: None,
             disc_name: None,
+            disc_unzipping: None,
             region: Region::USA,
             pending_region_change: None,
             image_resizer: Resizer::new(),
@@ -383,7 +385,10 @@ impl PixelsRenderer {
                 else {
                     String::from("")
                 };
-                if self.warp_mode || self.paused || self.debug_mode  || self.audio_muted {
+                if let Some(unzipping) = &self.disc_unzipping {
+                    window.set_title(&format!("{} v.{} - Unzipping disc {} ...",EMU_NAME,EMU_VERSION,unzipping));
+                }
+                else if self.warp_mode || self.paused || self.debug_mode  || self.audio_muted {
                     let mut info = String::new();
                     if self.warp_mode {
                         info.push_str(" (warp mode)");
@@ -518,6 +523,17 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         if self.full_screen {
             window_ref.set_fullscreen(Some(Fullscreen::Borderless(None)));
         }
+        else {
+            if let Some(monitor) = window_ref.current_monitor() {
+                let monitor_size = monitor.size();
+                let window_size = window_ref.outer_size();
+
+                let x = (monitor_size.width as i32 - window_size.width as i32) / 2;
+                let y = (monitor_size.height as i32 - window_size.height as i32) / 2;
+
+                window_ref.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+            }
+        }
 
         // Crea pixels
         let window_size = window_ref.inner_size();
@@ -559,8 +575,17 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             }
             PS1Event::CDROMAccess(access) => {
                 match access {
+                    CDOperation::DiscUnzippingStop => {
+                        self.disc_unzipping = None;
+                        self.update_fps(true);
+                    }
+                    CDOperation::DiscUnzippingStart(name) => {
+                        self.disc_unzipping = Some(name);
+                        self.update_fps(true);
+                    }
                     CDOperation::DiscLoading(name) => {
                         self.disc_name = Some(name);
+                        self.disc_unzipping = None;
                     }
                     _ => {
                         self.last_cd_access = Some(access);

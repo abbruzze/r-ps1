@@ -20,6 +20,8 @@ serde_yaml = "0.9"
 clap = { version = "4", features = ["derive"] }
 fast_image_resize = "6.0.0"
 image = "0.25.10"
+zip = "8.6.0"
+tempfile = "3.27.0"
 
 [build-dependencies]
 embed-resource = "3.0.8"

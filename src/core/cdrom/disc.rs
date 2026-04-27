@@ -3,7 +3,9 @@ use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
+use zip::ZipArchive;
 use crate::core::cdrom::{cue, util, Region};
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
@@ -290,24 +292,78 @@ pub struct Disc {
     head_position: DiscTime,
     track_number: u8,
     tracks_start_times: Vec<DiscTime>,
+    temp_dir: Option<TempDir>,
+}
+
+impl Drop for Disc {
+    fn drop(&mut self) {
+        info!("Closing disc {} ...",self.cue_file_name);
+        if let Some(tmp_dir) = self.temp_dir.as_ref() {
+            info!("Closing temporary directory {}...",tmp_dir.path().display());
+        }
+    }
 }
 
 impl Disc {
+    fn get_cue_path_from_zip(disc_path:&String) -> Option<(TempDir,String)> {
+        let file = File::open(disc_path).unwrap();
+        if let Ok(mut zip_file) = ZipArchive::new(file) && let Ok(temp_dir) = tempfile::tempdir() {
+            info!("Unzipping archive {} to a temporary directory...",disc_path);
+            let mut cue_path : Option<String> = None;
+            for i in 0..zip_file.len() {
+                let mut entry = zip_file.by_index(i).unwrap();
+                let path = temp_dir.path().join(entry.name());
+                if entry.name().to_uppercase().ends_with(".CUE") {
+                    cue_path = Some(path.to_str().unwrap().to_string());
+                }
+                else {
+                    if entry.is_dir() {
+                        std::fs::create_dir_all(&path).unwrap();
+                        continue;
+                    }
+                }
+                let mut out = File::create(&path).unwrap();
+                info!("Unzipping {} ...",path.display());
+                std::io::copy(&mut entry, &mut out).unwrap();
+            }
+            if let Some(cue_path) = cue_path.take() {
+                Some((temp_dir,cue_path))
+            }
+            else {
+                None
+            }
+        }
+        else {
+            error!("Cannot create temporary directory or open zip file {}",disc_path);
+            None
+        }
+    }
+
     pub fn new(cue_file_name:&String) -> Result<Self,String> {
-        let cue = match cue::parse_cue(cue_file_name) {
-            Ok(cue) => cue,
-            Err(e) => return Err(format!("Failed to parse cue sheet '{}': {}",cue_file_name,e))
+        let (temp_dir,file_name) = if cue_file_name.to_uppercase().ends_with(".ZIP") {
+            match Self::get_cue_path_from_zip(cue_file_name) {
+                Some((tmp_dir,file_name)) => (Some(tmp_dir) ,file_name),
+                None => return Err(format!("Failed to extract cue sheet from zip file '{}'",cue_file_name))
+            }
+        }
+        else {
+            (None,cue_file_name.clone())
         };
-        let file_path_dir = Path::new(cue_file_name).parent().unwrap();
+        let cue = match cue::parse_cue(file_name.clone()) {
+            Ok(cue) => cue,
+            Err(e) => return Err(format!("Failed to parse cue sheet '{}': {}",file_name,e))
+        };
+        let file_path_dir = Path::new(&file_name).parent().unwrap();
 
         let mut disc = Disc {
-            cue_file_name: cue_file_name.clone(),
+            cue_file_name: file_name.clone(),
             tracks: Vec::new(),
             files: Vec::new(),
             region: None,
             head_position: DiscTime::new(0,0,0),
             track_number: 0,
             tracks_start_times: Vec::new(),
+            temp_dir
         };
 
         let mut absolute_start_time = DiscTime::ZERO_TIME;

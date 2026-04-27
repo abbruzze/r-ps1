@@ -24,10 +24,13 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use std::{fs, thread};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use thread::spawn;
 use regex::Regex;
+use tempfile::tempdir;
 use tracing::{error, info, warn};
+use zip::ZipArchive;
 use crate::cheats::Cheats;
 use crate::core::bios::PS1_BIOS_SET;
 
@@ -100,6 +103,7 @@ pub struct Emulator {
     config:Config,
     cheats: Cheats,
     cheats_on: bool,
+    shutting_down: bool,
 }
 
 impl Emulator {
@@ -165,6 +169,7 @@ impl Emulator {
             config,
             cheats: Cheats::new(),
             cheats_on: false,
+            shutting_down: false,
         };
 
         // cheats
@@ -220,6 +225,9 @@ impl Emulator {
         }
         else {
             info!("Loading disc '{}' ...",disc_path);
+            if disc_path.to_uppercase().ends_with(".ZIP") {
+                self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(CDOperation::DiscUnzippingStart(disc_path.clone()));
+            }
             match crate::core::cdrom::disc::Disc::new(&disc_path) {
                 Ok(disc) => {
                     let region = match self.config.region_policy {
@@ -243,8 +251,9 @@ impl Emulator {
                     self.gpu.borrow_mut().get_renderer_mut().set_region(region);
                     self.gpu.borrow_mut().set_video_mode(video_mode);
 
+                    let real_disc_name = disc.get_cue_file_name().clone();
                     self.cdrom.borrow_mut().insert_disk(disc);
-                    let disc_name = PathBuf::from(disc_path);
+                    let disc_name = PathBuf::from(real_disc_name);
                     let name = Path::new(&disc_name)
                         .file_stem()
                         .unwrap()
@@ -256,6 +265,7 @@ impl Emulator {
                 }
                 Err(e) => {
                     error!("Error while loading disc: {:?}",e);
+                    self.gpu.borrow_mut().get_renderer_mut().set_last_cd_access(CDOperation::DiscUnzippingStop);
                 }
             }
         }
@@ -305,7 +315,7 @@ impl Emulator {
 
         let debugger_enabled = self.config.debugger_enabled;
 
-        'main_loop: loop {
+        'main_loop: while !self.shutting_down {
             if self.just_entered_in_step_mode {
                 self.send_cpu_info(&loop_tx_cmd);
                 self.just_entered_in_step_mode = false;
@@ -320,10 +330,12 @@ impl Emulator {
                 if self.paused {
                     if send_step {
                         self.send_cpu_info(&loop_tx_cmd);
-                        continue 'main_loop;
                     }
-                    self.check_input();
-                    thread::sleep(Duration::from_millis(100));
+                    else {
+                        self.check_input();
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                    continue 'main_loop;
                 }
                 self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress);
 
@@ -435,6 +447,7 @@ impl Emulator {
                 GUIEvent::Shutdown => {
                     self.shutdown();
                     self.gpu.borrow_mut().get_renderer_mut().shutdown();
+                    self.shutting_down = true;
                 }
                 GUIEvent::InsertDisc(disc_path) => {
                     self.load_disc(&disc_path.to_string_lossy().to_string(),false);

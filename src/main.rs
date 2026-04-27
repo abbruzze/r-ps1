@@ -150,5 +150,7 @@ fn main() {
         let mut emu = core::emu::Emulator::new(config,logger,Box::new(renderer),gui_event_rx);
         
         emu.emulate();
+        
+        info!("Emulator is shutting down ...");
     }, config);
 }

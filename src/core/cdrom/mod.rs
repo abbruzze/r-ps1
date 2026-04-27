@@ -176,6 +176,8 @@ impl DriveState {
 
 #[derive(Debug, Clone)]
 pub enum CDOperation {
+    DiscUnzippingStart(String),
+    DiscUnzippingStop,
     DiscLoading(String),
     Reading(DiscTime),
     Playing(DiscTime),
