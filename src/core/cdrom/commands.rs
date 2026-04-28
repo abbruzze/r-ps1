@@ -503,7 +503,7 @@ impl CDRom {
             }
             let next_sector_cycles = Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
             info!("CDROM reading next sector in {next_sector_cycles} cycles seeking cycles {seeking_cycles} [{} ms]",self.get_speed().get_read_sector_ms());
-            self.change_drive_state(DriveState::Reading { next_sector_cycles, seeking_cycles });
+            self.change_drive_state(DriveState::Reading { next_sector_cycles, seeking_cycles: 0 }); // seeking cycles prevent running gran turismo 2
             CommandState::Idle
         }
         else if self.is_disk_inserted() {
