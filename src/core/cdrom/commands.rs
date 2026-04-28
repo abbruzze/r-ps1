@@ -32,12 +32,15 @@ impl CDRom {
     pub(super) fn check_drive_state(&mut self, irq_handler: &mut IrqHandler) {
         let new_state = match self.drive_state.clone() {
             DriveState::Idle => DriveState::Idle,
-            DriveState::Playing { sample_index, report_counter, report_absolute , seeking_cycles } => {
+            DriveState::Playing { first_sector_cycles, sample_index, report_counter, report_absolute , seeking_cycles } => {
                 if seeking_cycles > 1 {
-                    DriveState::Playing { sample_index, report_counter, report_absolute , seeking_cycles: seeking_cycles - 1 }
+                    DriveState::Playing { first_sector_cycles, sample_index, report_counter, report_absolute , seeking_cycles: seeking_cycles - 1 }
+                }
+                else if first_sector_cycles == 1 {
+                    self.play_sample(sample_index, report_counter, report_absolute, irq_handler)
                 }
                 else {
-                    self.play_sample(sample_index, report_counter, report_absolute, irq_handler)
+                    DriveState::Playing { first_sector_cycles: first_sector_cycles - 1, sample_index, report_counter, report_absolute , seeking_cycles }
                 }
             },
             DriveState::Seeking => DriveState::Seeking,
@@ -263,6 +266,7 @@ impl CDRom {
     // Play - Command 03h (,track) --> INT3(stat) --> optional INT1(report bytes)
     fn command_play(&mut self) -> CommandState {
         self.activate_motor(true);
+        let first_sector_cycles = Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
 
         if let Some(disc) = self.disc.as_mut() {
             let mut seeking_cycles = 0usize;
@@ -285,9 +289,9 @@ impl CDRom {
 
             }
             if !matches!(self.drive_state,DriveState::Playing { .. }) { // fixes motorhead
-                self.drive_state = DriveState::Playing { sample_index: 0, report_counter: 1, report_absolute: true, seeking_cycles };
+                self.drive_state = DriveState::Playing { first_sector_cycles, sample_index: 0, report_counter: 1, report_absolute: true, seeking_cycles };
             }
-            info!("CDROM play track {track} at loc {:?}",disc.get_head_position());
+            info!("CDROM play track {track} at loc {:?} seeking cycles: {seeking_cycles}",disc.get_head_position());
 
             self.make_stat_response(INT3,Command::Play)
         }
@@ -782,6 +786,6 @@ impl CDRom {
             sample_index = 0;
         }
 
-        DriveState::Playing { sample_index, report_counter, report_absolute, seeking_cycles: 0 }
+        DriveState::Playing { first_sector_cycles: 1, sample_index, report_counter, report_absolute, seeking_cycles: 0 }
     }
 }
