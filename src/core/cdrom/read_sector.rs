@@ -18,18 +18,20 @@ impl CDRom {
                         (!self.adpcm.filter_enabled || sector.matches_file_and_channel(self.adpcm.file,self.adpcm.channel)) {
                         // Audio ADPCM
                         self.adpcm.decode_sector(&sector.sector);
-                        debug!("CDROM Audio ADPCM sector at {},decoding ...",disc.get_head_position());
+                        self.last_sector.clear();
+                        self.last_sector.extend(sector.sector);
+                        info!("CDROM Audio ADPCM sector at {},decoding ...",disc.get_head_position());
                     }
                     else if self.adpcm.filter_enabled && sector.is_audio_adpcm() {
                         // The controller does not send sectors to the data FIFO if ADPCM filtering is enabled
                         // and this is a real-time audio sector
                     }
                     else {
-                        let data = sector.get_mode2_user_data(&sector_size);
                         if self.data_buffer.len() > 0 {
                             warn!("Reading next sector at {} with old bytes not read: {}",disc.get_head_position(),self.data_buffer.len());
                         }
                         send_int1 = true;
+                        let data = sector.get_mode2_user_data(&sector_size);
                         self.last_sector.clear();
                         self.last_sector.extend(data);
                         self.data_buffer.clear();
