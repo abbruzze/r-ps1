@@ -156,7 +156,7 @@ enum CommandState {
 #[derive(Debug,Clone)]
 enum DriveState {
     Idle,
-    Playing { sample_index:usize, report_counter:usize, report_absolute: bool, seeking_cycles: usize },
+    Playing { first_sector_cycles: usize, sample_index:usize, report_counter:usize, report_absolute: bool, seeking_cycles: usize },
     Seeking,
     Reading { next_sector_cycles: usize, seeking_cycles: usize },
 }
@@ -228,7 +228,7 @@ impl DmaDevice for CDRom {
         self.read_2::<32>()
     }
     fn dma_cycles_per_word(&self) -> usize {
-        24
+        1 // should be 24
     }
 }
 
