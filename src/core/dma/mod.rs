@@ -33,11 +33,6 @@ impl DmaDevice for DummyDMAChannel {
     }
 }
 
-pub struct DMAState {
-    pub dma_in_progress: bool,
-    pub dma_cycles: usize,
-}
-
 #[derive(Debug)]
 enum SyncMode {
     Manual,
