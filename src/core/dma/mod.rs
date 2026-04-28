@@ -743,9 +743,15 @@ impl DMAController {
         self.reg_fc = value;
     }
 
-    pub fn do_dma_for_cpu_cycles(&mut self,mut cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> DMAState {
+    pub fn do_dma_for_cpu_cycles(&mut self,mut cpu_cycles:usize,bus:&mut Bus,irq_handler:&mut IrqHandler) -> bool {
+        if self.dma_pending_cycles > 0 {
+            self.dma_pending_cycles = self.dma_pending_cycles.saturating_sub(cpu_cycles);
+            if self.dma_pending_cycles > 0 {
+                return true;
+            }
+        }
+
         let mut dma_in_progress = false;
-        let mut dma_cycles = 0usize;
         
         if self.dma_enabled {
             while cpu_cycles > 0 {
@@ -755,7 +761,7 @@ impl DMAController {
                     cpu_cycles -= cycles_done;
                 }
                 else {
-                    dma_cycles = cycles_done - cpu_cycles;
+                    self.dma_pending_cycles = cycles_done - cpu_cycles;
                     break;
                 }
                 if self.dma_in_progress_on_channel.is_none() {
@@ -763,7 +769,7 @@ impl DMAController {
                 }
             }
         }
-        DMAState { dma_in_progress, dma_cycles }
+        dma_in_progress
     }
     #[inline]
     fn is_changed(&self) -> bool {
@@ -822,7 +828,7 @@ impl DMAController {
                 false
             }
             DMAResult::BlockFinished(last_block,words) => {
-                dma_cycles *= words;
+                //dma_cycles *= words; // breaks Final Doom
                 if ((last_block && matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::EntireTransferComplete)) || matches!(self.irq_control_channel(channel_in_progress),IrqDMAType::BlockComplete)) && self.is_irq_channel_enabled(channel_in_progress) {
                     self.set_irq_for_channel(channel_in_progress);
                     self.check_irq(irq_handler);
