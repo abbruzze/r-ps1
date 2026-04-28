@@ -138,9 +138,12 @@ impl CDRom {
         if self.is_irq_pending() {
             warn!("CDROM IRQ already pending: pending={} new={irq}",self.hintsts_reg & 7);
         }
+        else {
+            self.result_fifo.clear(); // fix some games
+        }
         self.set_irq(irq);
         self.check_irq(irq_handler);
-        //self.result_fifo.clear();
+
         for b in response {
             self.result_fifo.push_back(b);
         }
