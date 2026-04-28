@@ -90,7 +90,7 @@ impl CDRom {
                     debug!("CDROM Sending play report: {:?} is_absolute={report_absolute} time={:?} track={:?}",report,time,track);
                 }
 
-                for e in report.iter_mut() {
+                for e in report.iter_mut().skip(1) {
                     *e = BCD::encode(*e);
                 }
             }
