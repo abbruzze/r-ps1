@@ -12,14 +12,16 @@ impl CDRom {
         if let Some(disc) = self.disc.as_mut() {
             match disc.read_sector() {
                 Some(sector) => {
+                    // 4-byte sector header, plus 4-byte subheader of the current sector
+                    self.last_sector_header.clear();
+                    self.last_sector_header.extend(&sector.sector[12..20]);
+
                     let adpcm_enabled = (self.mode & 0x40) != 0;
                     if sector.is_audio_adpcm() &&
                         adpcm_enabled &&
                         (!self.adpcm.filter_enabled || sector.matches_file_and_channel(self.adpcm.file,self.adpcm.channel)) {
                         // Audio ADPCM
                         self.adpcm.decode_sector(&sector.sector);
-                        self.last_sector.clear();
-                        self.last_sector.extend(sector.sector);
                         info!("CDROM Audio ADPCM sector at {},decoding ...",disc.get_head_position());
                     }
                     else if self.adpcm.filter_enabled && sector.is_audio_adpcm() {
@@ -32,8 +34,6 @@ impl CDRom {
                         }
                         send_int1 = true;
                         let data = sector.get_mode2_user_data(&sector_size);
-                        self.last_sector.clear();
-                        self.last_sector.extend(data);
                         self.data_buffer.clear();
                         self.data_buffer.extend(data);
                     }

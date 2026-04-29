@@ -643,7 +643,7 @@ impl CDRom {
     fn command_get_locl(&mut self) -> CommandState {
         // extract 8 bytes (12..19) from current sector
         let mut locl = Vec::new();
-        for b in self.last_sector[12..20].iter() {
+        for b in self.last_sector_header.iter() {
             locl.push(*b);
         }
         info!("CDROM getlocl: {:?}",locl);
