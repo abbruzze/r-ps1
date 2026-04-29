@@ -184,6 +184,13 @@ pub enum CDOperation {
     Idle,
 }
 
+#[derive(Debug)]
+struct PendingIrq {
+    cmd: Command,
+    irq: u8,
+    response: Vec<u8>,
+}
+
 const CHANGE_DISK_CYCLES: usize = 44_100 * 2;
 
 pub struct CDRom {
@@ -211,6 +218,7 @@ pub struct CDRom {
     adpcm: XaAdpcmState,
     changing_disk_cycles: usize,
     pending_disc: Option<Disc>,
+    pending_irq: Option<PendingIrq>,
 }
 
 impl DmaDevice for CDRom {
@@ -266,6 +274,7 @@ impl Resettable for CDRom {
         self.adpcm = XaAdpcmState::new();
         self.changing_disk_cycles = 0;
         self.pending_disc = None;
+        self.pending_irq = None;
         info!("CDROM reset done");
     }
 }
@@ -297,6 +306,7 @@ impl CDRom {
             adpcm: XaAdpcmState::new(),
             changing_disk_cycles: 0,
             pending_disc: None,
+            pending_irq: None,
         }
     }
 
@@ -331,6 +341,11 @@ impl CDRom {
                 }
             }
         }
+        if !self.is_irq_pending() && let Some(PendingIrq{ cmd,irq,response}) = self.pending_irq.take() {
+            info!("CDROM applying pending IRQ: {irq} with result {:?} for command {:?}",response,cmd);
+            self.apply_irq_and_result(cmd,irq,response,irq_handler);
+        }
+        
         self.audio_sample = AudioLeftRight(0,0);
         self.check_drive_state(irq_handler);
         self.check_command_state(irq_handler);

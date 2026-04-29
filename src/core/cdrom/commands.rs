@@ -1,6 +1,6 @@
 use std::process::exit;
 use tracing::{debug, error, info, warn};
-use crate::core::cdrom::{CDRom, Command, CommandState, DriveState, Region, CDROM_VER};
+use crate::core::cdrom::{CDRom, Command, CommandState, DriveState, PendingIrq, Region, CDROM_VER};
 use crate::core::cdrom::disc::{AudioLeftRight, DiscTime, TrackType, BCD};
 use crate::core::interrupt::IrqHandler;
 
@@ -137,6 +137,13 @@ impl CDRom {
         debug!("CDROM applying irq {:02X} with response {:?} for command {cmd:?}",irq,response);
         if self.is_irq_pending() {
             warn!("CDROM IRQ already pending: pending={} new={irq}",self.hintsts_reg & 7);
+            if self.pending_irq.is_none() {
+                self.pending_irq = Some(PendingIrq { cmd,irq,response });
+                return;
+            }
+            else {
+                warn!("CDROM there is another pending interrupt waiting: {:?}",self.pending_irq.as_ref().unwrap());
+            }
         }
         else {
             self.result_fifo.clear(); // fix some games
