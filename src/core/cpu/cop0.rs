@@ -1,6 +1,7 @@
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use crate::core::cpu::CpuException;
 use crate::core::cpu::{Coprocessor, CopResult};
+use crate::core::Resettable;
 
 pub static COP0_REGISTER_ALIASES: [ &str; 32 ] = [
     "$cop0_r0", "$cop0_r1", "$cop0_r2", "$cop0_bpc", "$cop0_r4", "$cop0_bda", "$cop0_jumpdest", "$cop0_dcic",
@@ -122,6 +123,18 @@ pub struct Cop0 {
     pending_int_on_next_opcode: bool,
 }
 
+impl Resettable for Cop0 {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        // At reset, the SWc, KUc, and IEc bits are set to zero; BEV is set to one; and the value of
+        // the TS bit is set to 0 (TS = 0) The rest of the bit fields are undefined after reset.
+        self.regs.fill(0);
+        self.regs[Cop0Reg::SR as usize] = 1 << 22; // BEV = 1
+        self.regs[15] = PRID_VALUE;
+        self.pending_int_on_next_opcode = false;
+        info!("Cop0 reset done");
+    }
+}
+
 impl Cop0 {
     pub fn new() -> Self {
         let mut cop0 = Cop0 {
@@ -129,22 +142,13 @@ impl Cop0 {
             pending_int_on_next_opcode: false,
         };
 
-        cop0.reset();
+        cop0.reset_component(true);
 
         cop0
     }
     
     pub fn get_regs(&self) -> &[u32;32] {
         &self.regs
-    }
-
-    pub fn reset(&mut self) {
-        // At reset, the SWc, KUc, and IEc bits are set to zero; BEV is set to one; and the value of
-        // the TS bit is set to 0 (TS = 0) The rest of the bit fields are undefined after reset.
-        self.regs[Cop0Reg::SR as usize] = 1 << 22; // BEV = 1
-        self.regs[15] = PRID_VALUE;
-        self.pending_int_on_next_opcode = false;
-        // TODO : set other registers to default values
     }
 
     pub fn is_in_kernel_mode(&self) -> bool {

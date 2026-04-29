@@ -22,7 +22,7 @@ impl CDRom {
                         (!self.adpcm.filter_enabled || sector.matches_file_and_channel(self.adpcm.file,self.adpcm.channel)) {
                         // Audio ADPCM
                         self.adpcm.decode_sector(&sector.sector);
-                        info!("CDROM Audio ADPCM sector at {},decoding ...",disc.get_head_position());
+                        debug!("CDROM Audio ADPCM sector at {},decoding ...",disc.get_head_position());
                     }
                     else if self.adpcm.filter_enabled && sector.is_audio_adpcm() {
                         // The controller does not send sectors to the data FIFO if ADPCM filtering is enabled

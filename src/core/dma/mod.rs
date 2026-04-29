@@ -4,7 +4,8 @@ use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 use std::cell::RefCell;
 use std::rc::Rc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+use crate::core::Resettable;
 
 pub trait DmaDevice {
     // true if device is ready for DMA transfer
@@ -154,6 +155,27 @@ struct DMAChannel {
     linked_list_header: Option<(u32,u32)>,
     header_in_a_row_count: usize,
     cycles_per_word: usize,
+}
+
+impl Resettable for DMAChannel {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.madr = 0;
+        self.madr_read = 0;
+        self.bcr = 0;
+        self.chcr = 0;
+        self.enabled = false;
+        self.bus_error = false;
+        self.remaining_words = 0;
+        self.remaining_blocks = 0;
+        self.waiting_next_block = false;
+        self.chopping_window_words = 0;
+        self.chopping_window_cycles = 0;
+        self.linked_list_header = None;
+        self.header_in_a_row_count = 0;
+        self.sync_mode = SyncMode::Slice;
+        self.transfer_direction = TransferDirection::DeviceToRAM;
+        info!("DMAChannel#{} reset done",self.id);
+    }
 }
 
 impl DMAChannel {
@@ -569,6 +591,24 @@ pub struct DMAController {
     dma_in_progress_on_channel: Option<usize>,
     dma_enabled: bool,
     dma_pending_cycles: usize,
+}
+
+impl Resettable for DMAController {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.dpcr = 0x07654321;
+        self.dpcr_changed = false;
+        self.chcr_changed = false;
+        self.dcir = 0;
+        self.irq_flags = 0;
+        self.reg_f8 = 0;
+        self.reg_fc = 0;
+        self.dma_in_progress_on_channel = None;
+        self.dma_enabled = false;
+        self.dma_pending_cycles = 0;
+        self.priorities = std::array::from_fn(|i| (7 - i, 7 - i,false));
+        self.channels.iter_mut().for_each(|c| c.reset_component(hard_reset));
+        info!("DMAController reset done");
+    }
 }
 
 impl DMAController {

@@ -1,6 +1,7 @@
 use tracing::debug;
 use crate::core::clock::{Clock, EventType};
 use crate::core::interrupt::{InterruptType, IrqHandler};
+use crate::core::Resettable;
 
 #[derive(Debug,PartialEq)]
 pub enum TimerClockSource {
@@ -165,6 +166,22 @@ pub struct Timer<const N: usize> {
     blank_pending_cycles: u64,
 }
 
+impl Resettable for Timer<0> {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.reset();
+    }
+}
+impl Resettable for Timer<1> {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.reset();
+    }
+}
+impl Resettable for Timer<2> {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.reset();
+    }
+}
+
 impl<const N: usize> Timer<N> {
     pub fn new() -> Self {
         const { assert!(N < 3) }
@@ -187,6 +204,26 @@ impl<const N: usize> Timer<N> {
             blank_paused_cycles: 0,
             blank_pending_cycles: 0,
         }
+    }
+
+    fn reset(&mut self) {
+        self.counter = 0;
+        self.counter_mode = 0;
+        self.counter_target = 0;
+        self.clock_source = TimerClockSource::SystemClock;
+        self.sync_mode = TimerSyncMode::NoSync;
+        self.inside_video_blank = false;
+        self.video_blank_occurred_once = false;
+        self.irq_repeat_mode = TimerIRQRepeatMode::OneShot;
+        self.irq_pulse_mode = TimerIRQPulseMode::Pulse;
+        self.irq_one_shot_fired = false;
+        self.timer_start_timestamp = 0;
+        self.timer_target_timestamp = 0;
+        self.blank_start_timestamp = 0;
+        self.blank_end_timestamp = 0;
+        self.dot_clock_divider = 8;
+        self.blank_paused_cycles = 0;
+        self.blank_pending_cycles = 0;
     }
 
     pub fn initial_scheduling(&mut self,clock:&mut Clock) {

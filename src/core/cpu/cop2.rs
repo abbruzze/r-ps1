@@ -1,6 +1,7 @@
 use std::cmp;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use crate::core::cpu::{CopResult, Coprocessor};
+use crate::core::Resettable;
 
 pub static COP2_CONTROL_REGISTER_ALIASES: [ &str; 32 ] = [
     "$cop2_r11r12", "$cop2_r13r21", "$cop2_r22r23", "$cop2_r31r32", "$cop2_r33", "$cop2_trx", "$cop2_try", "$cop2_trz",
@@ -524,6 +525,42 @@ impl Coprocessor for Cop2 {
         }
 
         CopResult(0,penalty)
+    }
+}
+
+impl Resettable for Cop2 {
+    fn reset_component(&mut self,_hard_reset:bool) {
+        self.sf = 0;
+        self.mx = 0;
+        self.sv = 0;
+        self.cv = 0;
+        self.lm = false;
+        self.rotation = Matrix3x3::default();
+        self.tr = Vec3::default();
+        self.light = Matrix3x3::default();
+        self.bk = Vec3::default();
+        self.colour = Matrix3x3::default();
+        self.fc = Vec3::default();
+        self.ofx = 0;
+        self.ofy = 0;
+        self.h = 0;
+        self.dqa = 0;
+        self.dqb = 0;
+        self.zsf3 = 0;
+        self.zsf4 = 0;
+        self.flags = 0;
+        self.v = [Vec3::default(); 3];
+        self.rgb = RGB::default();
+        self.otz = 0;
+        self.ir = [0; 4];
+        self.sxy_fifo = [Vec2::default(); 3];
+        self.sz_fifo = [0; 4];
+        self.rgb_fifo = [RGB::default(); 3];
+        self.res1 = 0;
+        self.mac = [0; 4];
+        self.lzcs = 0;
+        self.lzcr = 0;
+        info!("Cop2 reset done");
     }
 }
 

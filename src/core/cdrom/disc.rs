@@ -7,6 +7,7 @@ use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
 use zip::ZipArchive;
 use crate::core::cdrom::{cue, util, Region};
+use crate::core::Resettable;
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
 
@@ -293,6 +294,14 @@ pub struct Disc {
     track_number: u8,
     tracks_start_times: Vec<DiscTime>,
     temp_dir: Option<TempDir>,
+}
+
+impl Resettable for Disc {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.track_number = 0;
+        self.head_position = DiscTime::ZERO_TIME;
+        info!("Disc {} reset done",self.cue_file_name);
+    }
 }
 
 impl Drop for Disc {

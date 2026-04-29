@@ -3,11 +3,12 @@
 use std::array;
 use std::cell::Cell;
 use std::ops::{Index, IndexMut, Range};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use crate::core::cdrom::CDRom;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
+use crate::core::Resettable;
 use crate::core::spu::envelope::VolumeControl;
 use crate::core::spu::noise::NoiseGenerator;
 use crate::core::spu::reverb::ReverbUnit;
@@ -50,6 +51,13 @@ impl SoundRam {
             irq_address: 0,
             irq: Cell::new(false),
         }
+    }
+
+    fn reset(&mut self) {
+        self.ram.fill(0);
+        self.irq_enabled = false;
+        self.irq_address = 0;
+        self.irq.set(false);
     }
 
     fn read_irq_address(&self) -> u32 {
@@ -144,6 +152,14 @@ struct DataPort {
     current_address: u32,
 }
 
+impl Resettable for DataPort {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.mode = DataPortMode::default();
+        self.start_address = 0;
+        self.current_address = 0;
+    }
+}
+
 impl DataPort {
     fn new() -> Self {
         Self { mode: DataPortMode::default(), start_address: 0, current_address: 0 }
@@ -172,6 +188,17 @@ struct ControlRegisters {
     cd_audio_enabled: bool,
     external_audio_reverb_enabled: bool,
     cd_audio_reverb_enabled: bool,
+}
+
+impl Resettable for ControlRegisters {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.soft_reset = true;
+        self.amplifier_enabled = false;
+        self.external_audio_enabled = false;
+        self.cd_audio_enabled = false;
+        self.external_audio_reverb_enabled = false;
+        self.cd_audio_reverb_enabled = false;
+    }
 }
 
 impl ControlRegisters {
@@ -283,6 +310,23 @@ pub struct Spu {
     noise: NoiseGenerator,
     last_irq_bit: bool,
     capture_buffer_addr: u32,
+}
+
+impl Resettable for Spu {
+    fn reset_component(&mut self, hard_reset: bool) {
+        if hard_reset {
+            self.sound_ram.reset();
+        }
+        self.voices.iter_mut().for_each(|v| v.reset_component(hard_reset));
+        self.control.reset_component(hard_reset);
+        self.volume.reset_component(hard_reset);
+        self.data_port.reset_component(hard_reset);
+        self.reverb = ReverbUnit::default();
+        self.noise = NoiseGenerator::new();
+        self.capture_buffer_addr = 0;
+        self.last_irq_bit = false;
+        info!("SPU reset done");
+    }
 }
 
 // Each individual capture buffer is 1KB

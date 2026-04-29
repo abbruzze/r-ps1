@@ -2,6 +2,7 @@ mod memory_card;
 
 use crate::core::controllers::memory_card::MemoryCard;
 use tracing::{debug, warn};
+use crate::core::Resettable;
 
 #[derive(Copy, Clone, Debug)]
 pub enum ControllerButton {
@@ -74,6 +75,18 @@ enum MemoryCardCommand {
     Read,
     Write,
     GetId,
+}
+
+impl Resettable for Controller {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.state = ControllerState::Init;
+        self.memory_card.reset();
+        self.memory_card_selected = false;
+        self.digital_switches = 0xFFFF;
+        self.analog_switches = 0;
+        self.last_cmd = 0;
+        self.write_cheksum = 0;
+    }
 }
 
 #[derive(Debug)]

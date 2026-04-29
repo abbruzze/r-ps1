@@ -11,9 +11,9 @@ use gilrs::{Event, EventType, Gilrs};
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
+use winit::event::{Modifiers, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersKeyState, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use crate::core::emu::EMU_NAME;
 use crate::core::cdrom::Region;
@@ -282,6 +282,7 @@ struct PixelsRenderer {
     last_window_size: Option<PhysicalSize<u32>>,
     iconified: bool,
     full_screen: bool,
+    key_modifiers : ModifiersState,
 }
 
 impl PixelsRenderer {
@@ -315,6 +316,7 @@ impl PixelsRenderer {
             last_window_size: None,
             iconified: false,
             full_screen: false,
+            key_modifiers: ModifiersState::default(),
         };
 
         renderer.full_screen = renderer.config.gpu_config.start_full_screen;
@@ -641,6 +643,9 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                     }
                 }
             }
+            WindowEvent::ModifiersChanged(new_modifiers) => {
+                self.key_modifiers = new_modifiers.state();
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.last_key = event.state.is_pressed();
                 if let PhysicalKey::Code(keycode) = event.physical_key {
@@ -679,6 +684,10 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                             KeyCode::Escape if self.full_screen => {
                                 self.window.unwrap().set_fullscreen(None);
                                 self.full_screen = false;
+                            }
+                            KeyCode::F5 if self.key_modifiers.alt_key() => {
+                                let _ = self.gui_event_tx.send(GUIEvent::Reset(self.key_modifiers.shift_key()));
+                                return;
                             }
                             _ => {}
                         }

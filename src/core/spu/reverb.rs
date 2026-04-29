@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use crate::core::spu::{multiply_volume, multiply_volume_i32, SoundRam, NUM_VOICES, SOUND_RAM_LEN, SOUND_RAM_MASK};
 use std::cmp;
 use tracing::debug;
+use crate::core::Resettable;
 use crate::core::spu::voice::Voice;
 use super::util::{I32Ext, U32Ext};
 

@@ -1,5 +1,6 @@
 use std::cmp;
-use tracing::debug;
+use tracing::{debug, info};
+use crate::core::Resettable;
 use crate::core::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
 use crate::core::spu::{adpcm, interpolate, multiply_volume, AdpcmInterpolation, SoundRam, SOUND_RAM_MASK};
 use crate::core::spu::envelope::{AdsrEnvelope, AdsrPhase, SweepEnvelope};
@@ -28,6 +29,32 @@ pub struct Voice {
     pitch_counter: u16,
     pub current_amplitude: i16,
     pub current_sample: (i16, i16),
+}
+
+impl Resettable for Voice {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.volume_r = SweepEnvelope::new();
+        self.volume_l = SweepEnvelope::new();
+        self.adsr = AdsrEnvelope::new();
+        self.adpcm_buffer = SpuAdpcmBuffer::new();
+        self.pitch_counter = 0;
+        self.current_amplitude = 0;
+        self.current_sample = (0, 0);
+        self.restart_pending = false;
+        self.restart_delay = 0;
+        self.release_pending = false;
+        self.soft_reset = true;
+        self.repeat_address_locked = false;
+        self.sample_rate = 0;
+        self.noise_enabled = false;
+        self.pitch_modulation_enabled = false;
+        self.start_address = 0;
+        self.repeat_address = 0;
+        self.current_address = 0;
+        self.keyed_on = false;
+        self.keyed_off = false;
+        info!("Voice {} reset done", self.voice_number);
+    }
 }
 
 impl Voice {

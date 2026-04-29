@@ -17,3 +17,7 @@ mod bios;
 
 // CPU Clock   =  33.868800MHz (44100Hz*300h)
 pub const CPU_CLOCK : usize = 33_868_800;
+
+trait Resettable {
+    fn reset_component(&mut self,hard_reset:bool);
+}

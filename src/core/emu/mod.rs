@@ -5,7 +5,7 @@ use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
 use crate::core::config::{Config, RegionPolicyConfig};
 use crate::core::cpu::{disassembler, Cpu};
-use crate::core::debugger;
+use crate::core::{debugger, Resettable};
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
 use crate::core::debugger::{DebuggerResponse, RunMode};
 use crate::core::dma::{DMAController, DmaDevice, DummyDMAChannel};
@@ -101,6 +101,26 @@ pub struct Emulator {
     cheats: Cheats,
     cheats_on: bool,
     shutting_down: bool,
+}
+
+impl Resettable for Emulator {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.bus.reset_component(hard_reset);
+        self.cpu.reset_component(hard_reset);
+        self.just_entered_in_step_mode = false;
+        self.run_mode = RunMode::FreeMode;
+        self.new_frame = false;
+        self.dma_in_progress = false;
+        self.perf.initialized = false;
+        self.last_cd_op = CDOperation::Idle;
+
+        // send first hblank event
+        self.gpu.borrow_mut().send_first_hblank_event(self.bus.get_clock_mut());
+        // schedule first audio event
+        self.bus.get_clock_mut().schedule_audio_sample();
+
+        info!("Emulator reset done");
+    }
 }
 
 impl Emulator {
@@ -457,6 +477,9 @@ impl Emulator {
                 GUIEvent::Cheat => {
                     self.cheats_on ^= true;
                     info!("Cheating is {}",self.cheats_on);
+                }
+                GUIEvent::Reset(hard_reset) => {
+                    self.reset_component(hard_reset);
                 }
             }
         }

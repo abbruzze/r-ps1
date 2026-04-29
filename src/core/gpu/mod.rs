@@ -13,7 +13,9 @@ use crate::core::memory::bus::Bus;
 use crate::renderer::{GPUFrameBuffer, Renderer};
 use std::cmp;
 use std::sync::Arc;
+use tracing::info;
 use crate::core::config::Config;
+use crate::core::Resettable;
 /*
 GPU Versions
 Summary of GPU Differences
@@ -695,11 +697,53 @@ pub struct GPU {
     command_delay_enabled: bool,
 }
 
+impl Resettable for GPU {
+    fn reset_component(&mut self, hard_reset: bool) {
+        if hard_reset {
+            self.vram.fill(0);
+        }
+        self.cmd_fifo.clear();
+        self.gp0_fifo.clear();
+        self.texture = Texture::default();
+        self.semi_transparency = SemiTransparency::Average;
+        self.dithering = false;
+        self.force_set_mask_bit = false;
+        self.preserve_masked_pixels = false;
+        self.drawing_area = DrawingArea::default();
+        self.display_config = DisplayConfig::default();
+        self.reverse_flag = false;
+        self.irq = false;
+        self.dma_direction = DMADirection::default();
+        self.ready_bits = ReadyBits::default();
+        self.raster = Raster::default();
+        self.gpu_read_register = 0;
+        self.gp0state = Gp0State::WaitingCommand;
+        self.show_whole_vram = false;
+        self.last_cpu_perf = 0;
+        self.cpu_vram_copy_buffer.clear();
+
+        self.display_config.horizontal_start = 0x260 + 0;
+        self.display_config.horizontal_end = 0x260 + 320 * 8;
+        self.display_config.vertical_start = 0x88 - 240 / 2;
+        self.display_config.vertical_end = 0x88 + 240 / 2;
+
+        self.raster.total_lines = self.display_config.video_mode.total_lines();
+        self.raster.total_cycles = self.display_config.video_mode.horizontal_cycles();
+
+        self.display_config.display_disabled = true;
+        self.ready_bits.ready_to_receive_cmd_word = true;
+
+        self.ready_bits.ready_to_receive_dma_block = true;
+
+        info!("GPU reset done");
+    }
+}
+
 impl GPU {
     pub fn new(config:&Config,renderer:Box<dyn Renderer>) -> Self {
         let mut gpu = GPU {
             renderer,
-            vram: vec![0;1024 * 512 * 2],//.into_boxed_slice(),
+            vram: vec![0;1024 * 512 * 2],
             gp1_commands: [GPU::gp1_not_implemented;0x100],
             cmd_fifo: CommandFifo::default(),
             gp0_fifo: CommandFifo::default(),
@@ -723,21 +767,9 @@ impl GPU {
             command_delay_enabled: config.gpu_config.command_delay_enabled,
         };
 
-        gpu.display_config.horizontal_start = 0x260 + 0;
-        gpu.display_config.horizontal_end = 0x260 + 320 * 8;
-        gpu.display_config.vertical_start = 0x88 - 240 / 2;
-        gpu.display_config.vertical_end = 0x88 + 240 / 2;
-
-        gpu.raster.total_lines = gpu.display_config.video_mode.total_lines();
-        gpu.raster.total_cycles = gpu.display_config.video_mode.horizontal_cycles();
-
-        gpu.display_config.display_disabled = true;
-        gpu.ready_bits.ready_to_receive_cmd_word = true;
+        gpu.reset_component(false);
         gpu.init_gp1_commands();
-
-        //gpu.ready_bits.ready_to_send_vram_to_cpu = true;
-        gpu.ready_bits.ready_to_receive_dma_block = true;
-
+        
         gpu
     }
 

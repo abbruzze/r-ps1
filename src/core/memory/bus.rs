@@ -9,13 +9,13 @@ use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 use crate::core::sio::SIO0;
 use crate::core::timer::Timer;
 use std::cell::RefCell;
-use std::process::exit;
 use std::rc::Rc;
 use tracing::{debug, info, warn};
 use crate::core::cdrom::CDRom;
 use crate::core::clock::{Clock, ClockConfig};
 use crate::core::config::Config;
 use crate::core::mdec::MDec;
+use crate::core::Resettable;
 use crate::core::spu::Spu;
 
 const DEBUG_MEM : bool = false;
@@ -155,6 +155,27 @@ impl Interrupt {
 
     fn is_interrupt_pending(&self) -> bool {
         (self.pending & self.mask) != 0
+    }
+}
+
+impl Resettable for Bus {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.clock.reset_component(hard_reset);
+        if hard_reset {
+            self.main_ram.fill(0);
+            self.scratchpad.fill(0);
+        }
+        self.cop0.reset_component(hard_reset);
+        self.timer0.reset_component(hard_reset);
+        self.timer1.reset_component(hard_reset);
+        self.timer2.reset_component(hard_reset);
+        self.dma.borrow_mut().reset_component(hard_reset);
+        self.gpu.borrow_mut().reset_component(hard_reset);
+        self.cdrom.borrow_mut().reset_component(hard_reset);
+        self.spu.borrow_mut().reset_component(hard_reset);
+        self.sio0.reset_component(hard_reset);
+        self.mdec.borrow_mut().reset_component(hard_reset);
+        self.interrupt.reset();
     }
 }
 

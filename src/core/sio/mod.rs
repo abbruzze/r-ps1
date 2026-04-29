@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use tracing::{debug, info, warn};
 use crate::core::clock::{Clock, EventType};
-use crate::core::CPU_CLOCK;
+use crate::core::{Resettable, CPU_CLOCK};
 use crate::core::controllers::Controller;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 
@@ -37,6 +37,25 @@ pub struct SIO0 {
     ack_asserted: bool,
     start_timer_timestamp: u64,
     response_cycles: u64,
+}
+
+impl Resettable for SIO0 {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.baud = 0;
+        self.mode = 0;
+        for controller in &mut self.controllers {
+            controller.reset_component(_hard_reset);
+        }
+        self.selected_device = None;
+        self.irq = false;
+        self.ctrl = 0;
+        self.tx_data.clear();
+        self.rx_fifo.clear();
+        self.tx_idle = true;
+        self.ack_asserted = false;
+        self.start_timer_timestamp = 0;
+        info!("SIO0 reset done");
+    }
 }
 
 impl SIO0 {

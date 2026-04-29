@@ -10,7 +10,7 @@ use tracing::debug;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::IrqHandler;
-
+use crate::core::Resettable;
 /*
 pub const ZIG_ZAG: &[u8; 64] = &[
     0, 1, 5, 6, 14, 15, 27, 28, 2, 4, 7, 13, 16, 26, 29, 42, 3, 8, 12, 17, 25, 30, 41, 43, 9, 11,
@@ -172,6 +172,17 @@ pub struct MDec {
     color_quant_table: [u8; 64],
     scale_table: [i16; 64],
     buffers: Box<Buffers>,
+}
+
+impl Resettable for MDec {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.command_state = CommandState::Idle;
+        self.decode_config = DecodeConfig::default();
+        self.data_in.clear();
+        self.data_out.clear();
+        self.enable_data_in = false;
+        self.enable_data_out = false;
+    }
 }
 
 impl MDec {

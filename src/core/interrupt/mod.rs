@@ -14,6 +14,7 @@
   11-15 Not used (always zero)
   16-31 Garbage
  */
+use crate::core::Resettable;
 
 pub trait InterruptController {
     fn raise_hw_interrupts(&mut self,irqs:u16);
@@ -37,6 +38,13 @@ pub enum InterruptType {
 pub struct IrqHandler {
     irqs: u16,
     changed: bool,
+}
+
+impl Resettable for IrqHandler {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.irqs = 0;
+        self.changed = false;
+    }
 }
 
 impl IrqHandler {

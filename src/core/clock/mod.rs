@@ -1,5 +1,7 @@
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use tracing::info;
+use crate::core::Resettable;
 
 // Tipo di evento
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -78,6 +80,14 @@ impl ClockConfig {
 
     pub fn cpu_to_gpu_cycles(&self, cpu_cycles: u64) -> u64 {
         (cpu_cycles as f64 * self.gpu_to_cpu_ratio) as u64
+    }
+}
+
+impl Resettable for Clock {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.events.clear();
+        self.current_time = 0;
+        info!("Clock reset done");
     }
 }
 

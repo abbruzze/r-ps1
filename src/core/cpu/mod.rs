@@ -1,6 +1,6 @@
 use crate::core::cpu::cop2::Cop2;
 use crate::core::cpu::instruction::{Instruction, Opcode};
-use crate::core::memory;
+use crate::core::{memory, Resettable};
 use crate::core::memory::{Memory, MemoryMap, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
 use std::mem;
 use tracing::{debug, error, info};
@@ -105,6 +105,16 @@ struct ICache {
 
 struct ICacheResult(u32,usize,bool); // value read, cycle penalty
 
+impl Resettable for ICache {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.requests = 0;
+        self.cache_miss = 0;
+        for line in self.lines.iter_mut() {
+            line.reset();
+        }
+    }
+}
+
 impl ICache {
     fn new() -> Self {
         // let mut lines = Vec::with_capacity(256);
@@ -174,14 +184,6 @@ impl ICache {
         let offset = ((address & 0x0F) >> 2) as usize; // 16 bytes, 4 words
         debug!("Writing opcode to i-cache at {:04X} with {:04X} index = {} offset = {}",address,opcode,index,offset);
         line.line[offset] = opcode;
-    }
-
-    fn reset(&mut self) {
-        self.requests = 0;
-        self.cache_miss = 0;
-        for line in self.lines.iter_mut() {
-            line.reset();
-        }
     }
 
     fn cache_miss_perc(&self) -> f32 {
@@ -323,6 +325,26 @@ pub struct Cpu {
     last_opcode: u32,
     cop2_remaining_cycles: usize,
     write_queue_enabled: bool,
+}
+
+impl Resettable for Cpu {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.pc = RESET_ADDRESS;
+        self.i_cache.reset_component(hard_reset);
+        self.cop2.reset_component(hard_reset);
+        self.write_queue.reset();
+        self.write_queue_elapsed = 0;
+        self.mul_div_pending_cycles = 0;
+        self.hi = 0;
+        self.lo = 0;
+        self.regs.fill(0);
+        self.delayed_load = (0,0);
+        self.delayed_load_next = (0,0);
+        self.regs.fill(0);
+        self.branch_taken = false;
+        self.cop2_remaining_cycles = 0;
+        info!("CPU reset done");
+    }
 }
 
 impl Cpu {
@@ -508,20 +530,6 @@ impl Cpu {
         self.last_opcode
     }
 
-    pub fn reset(&mut self) {
-        self.pc = RESET_ADDRESS;
-        //self.cop0.borrow_mut().reset();
-        self.i_cache.reset();
-        self.write_queue.reset();
-        self.write_queue_elapsed = 0;
-        self.mul_div_pending_cycles = 0;
-        self.hi = 0;
-        self.lo = 0;
-        self.regs.fill(0);
-        self.delayed_load = (0,0);
-        self.delayed_load_next = (0,0);
-    }
-    
     pub fn get_registers(&self) -> &[u32;32] {
         &self.regs
     }

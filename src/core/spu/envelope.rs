@@ -3,6 +3,7 @@
 use tracing::debug;
 use crate::core::spu::util;
 use util::{U16Ext,U32Ext};
+use crate::core::Resettable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EnvelopeMode {
@@ -159,6 +160,14 @@ pub struct SweepEnvelope {
     counter: u16,
 }
 
+impl Resettable for SweepEnvelope {
+    fn reset_component(&mut self, _hard_reset: bool) {
+        self.volume = 0;
+        self.setting = SweepSetting::default();
+        self.counter = 0;
+    }
+}
+
 impl SweepEnvelope {
     pub fn new() -> Self {
         Self { volume: 0, setting: SweepSetting::default(), counter: 0 }
@@ -202,6 +211,15 @@ pub struct VolumeControl {
     pub main_r: SweepEnvelope,
     pub cd_l: i16,
     pub cd_r: i16,
+}
+
+impl Resettable for VolumeControl {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.main_l.reset_component(hard_reset);
+        self.main_r.reset_component(hard_reset);
+        self.cd_l = 0;
+        self.cd_r = 0;
+    }
 }
 
 impl VolumeControl {

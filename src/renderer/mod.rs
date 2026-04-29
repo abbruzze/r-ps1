@@ -27,6 +27,7 @@ pub enum GUIEvent {
     Mute,
     InsertDisc(PathBuf),
     Cheat,
+    Reset(bool),
 }
 
 /*

@@ -14,7 +14,7 @@ use crate::core::cdrom::xaadpcm::XaAdpcmState;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
-
+use crate::core::Resettable;
 /*
 19h,20h --> INT3(yy,mm,dd,ver)
 Indicates the date (Year-month-day, in BCD format) and version of the HC05 CDROM controller BIOS. Known/existing values are:
@@ -229,6 +229,44 @@ impl DmaDevice for CDRom {
     }
     fn dma_cycles_per_word(&self) -> usize {
         1 // should be 24
+    }
+}
+
+impl Resettable for CDRom {
+    fn reset_component(&mut self, hard_reset: bool) {
+        self.drive_state = DriveState::Idle;
+        if hard_reset {
+            self.disc = None;
+        }
+        else {
+            if let Some(disc) = self.disc.as_mut() {
+                disc.reset_component(hard_reset);
+            }
+        }
+
+        self.bank_address = 0;
+        self.hintmsk_reg = 0;
+        self.hintsts_reg = 0;
+        self.hchpctl = 0;
+        self.parameter_fifo.clear();
+        self.result_fifo.clear();
+        self.data_buffer.clear();
+        self.last_sector_header.clear();
+        self.last_audio_sector.clear();
+        self.cd_to_spu_volume = [[0x80,0],[0x80,0]];
+        self.pending_cd_to_spu_volume = [[0x80,0],[0x80,0]];
+        self.audio_mute = false;
+        self.audio_sample = AudioLeftRight(0,0);
+        self.command_state = CommandState::Idle;
+        self.shell_once_opened = false;
+        self.send_int5_shell_opened = false;
+        self.motor_on = false;
+        self.pending_setloc = None;
+        self.mode = 0;
+        self.adpcm = XaAdpcmState::new();
+        self.changing_disk_cycles = 0;
+        self.pending_disc = None;
+        info!("CDROM reset done");
     }
 }
 
