@@ -1,25 +1,26 @@
-use std::collections::HashMap;
-use super::{CDOperation, GUIEvent};
-use super::{EmuStarter, PS1Event, GPUFrameBuffer, Renderer};
-use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Instant;
-use fast_image_resize::images::Image;
-use fast_image_resize::{PixelType, ResizeOptions, Resizer, ResizeAlg, FilterType};
-use gilrs::{Event, EventType, Gilrs};
-use tracing::{debug, error, info};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
-use winit::event::{Modifiers, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::{KeyCode, ModifiersKeyState, ModifiersState, PhysicalKey};
-use winit::window::{Fullscreen, Icon, Window, WindowId};
-use crate::core::emu::EMU_NAME;
+use super::{text_renderer, CDOperation, GUIEvent};
+use super::{EmuStarter, GPUFrameBuffer, PS1Event, Renderer};
 use crate::core::cdrom::Region;
 use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
+use crate::core::emu::EMU_NAME;
 use crate::core::emu::EMU_VERSION;
+use crate::renderer::text_renderer::TextRenderer;
+use fast_image_resize::images::Image;
+use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+use gilrs::{Event, EventType, Gilrs};
+use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
+use std::collections::HashMap;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Instant;
+use tracing::{debug, error, info};
+use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+use winit::window::{Fullscreen, Icon, Window, WindowId};
 
 static ICON_PNG: &[u8] = include_bytes!("../../resources/r-ps1_icon_32x32.png");
 static SPLASH_PNG: &[u8] = include_bytes!("../../resources/r-ps1_splash.png");
@@ -28,7 +29,9 @@ const DEFAULT_WIDTH: usize = 640;
 const DEFAULT_HEIGHT: usize = 480;
 const DEFAULT_SCALE: usize = 1;
 
-const FPS_PERIOD : f64 = 2.0;
+const FONT_SIZE: f32 = 14.0;
+
+const FPS_PERIOD_MILLIS: u128 = 600;
 
 pub struct GPUPixelsRenderer {
     event_proxy: EventLoopProxy<PS1Event>,
@@ -41,6 +44,9 @@ impl GPUPixelsRenderer {
 }
 
 impl Renderer for GPUPixelsRenderer {
+    fn set_splash_screen(&mut self) {
+        let _ = self.event_proxy.send_event(PS1Event::SplashScreen);
+    }
     fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u16) {
         let _ = self.event_proxy.send_event(PS1Event::NewFrame(frame, last_performance));
     }
@@ -256,6 +262,7 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
 struct PixelsRenderer {
     window: Option<&'static Window>,
     pixels: Option<Pixels<'static>>,
+    pixels_dimension: (u32,u32),
     width: usize,
     height: usize,
     visible_width: usize,
@@ -283,6 +290,7 @@ struct PixelsRenderer {
     iconified: bool,
     full_screen: bool,
     key_modifiers : ModifiersState,
+    text_renderer: TextRenderer,
 }
 
 impl PixelsRenderer {
@@ -290,6 +298,7 @@ impl PixelsRenderer {
         let mut renderer = Self {
             window: None,
             pixels: None,
+            pixels_dimension: (0,0),
             width : DEFAULT_WIDTH,
             height : DEFAULT_HEIGHT,
             visible_width: 0,
@@ -317,6 +326,7 @@ impl PixelsRenderer {
             iconified: false,
             full_screen: false,
             key_modifiers: ModifiersState::default(),
+            text_renderer: TextRenderer::new(),
         };
 
         renderer.full_screen = renderer.config.gpu_config.start_full_screen;
@@ -361,9 +371,9 @@ impl PixelsRenderer {
 
     fn update_fps(&mut self,update_now:bool) {
         self.fps_frames += 1;
-        let duration = self.fps_last.elapsed().as_secs_f64();
-        if duration >= FPS_PERIOD || update_now {
-            let fps = (self.fps_frames as f64 / duration).ceil();
+        let duration = self.fps_last.elapsed().as_millis();
+        if duration >= FPS_PERIOD_MILLIS || update_now || self.warp_mode {
+            let fps = (self.fps_frames as f64 / (duration as f64 / 1000.0)).ceil();
             if let Some(window) = self.window {
                 let cd_info : String = match &self.last_cd_access {
                     Some(access) => {
@@ -382,6 +392,7 @@ impl PixelsRenderer {
                     }
                     None => String::from("")
                 };
+                let mut message : Option<String> = None;
                 let disc_name = if self.config.cdrom_config.show_cdrom_access {
                     self.disc_name.clone().unwrap_or_else(|| String::from(""))
                 }
@@ -390,14 +401,17 @@ impl PixelsRenderer {
                 };
                 if let Some(unzipping) = &self.disc_unzipping {
                     window.set_title(&format!("{} v.{} - Unzipping disc {} ...",EMU_NAME,EMU_VERSION,unzipping));
+                    message = Some(format!("Unzipping disc {} ...",unzipping));
                 }
                 else if self.warp_mode || self.paused || self.debug_mode  || self.audio_muted {
                     let mut info = String::new();
                     if self.warp_mode {
                         info.push_str(" (warp mode)");
+                        message = Some("Warp mode ...".to_string());
                     }
                     if self.paused {
                         info.push_str(" (paused)");
+                        message = Some("Paused".to_uppercase());
                     }
                     if self.debug_mode {
                         info.push_str(" (debug mode)");
@@ -405,12 +419,21 @@ impl PixelsRenderer {
                     if self.audio_muted {
                         info.push_str(" (muted)");
                     }
-                    window.set_title(&format!("{} v.{} - ({:?}) FPS: {:02}{info} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                    window.set_title(&format!("{} v.{} - ({:?}) FPS: {:3}{info} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
                 else {
-                    window.set_title(&format!("{} v.{} - ({:?}) FPS: {:02} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                    window.set_title(&format!("{} v.{} - ({:?}) FPS: {:3} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
+                }
+
+                if let Some(msg) = message.as_ref() && let Some(pixels) = self.pixels.as_mut() && let Some(window) = self.window {
+                    let buffer = pixels.frame_mut();
+                    let window_size = window.inner_size();
+                    let font_size = window_size.width as f32 / DEFAULT_WIDTH as f32 * FONT_SIZE;
+                    self.text_renderer.draw_text(buffer,self.pixels_dimension.0,msg,10,(self.pixels_dimension.1 - font_size as u32) as i32,font_size,[255,255,255,255]);
+                    pixels.render().unwrap();
                 }
             }
+
             self.fps_frames = 0;
             self.fps_last = Instant::now();
         }
@@ -473,6 +496,9 @@ impl PixelsRenderer {
                     println!("Pixels buffer resize error");
                     return;
                 }
+                else {
+                    self.pixels_dimension = (adjusted_width,adjusted_height);
+                }
 
                 pixels.resize_surface(window_size.width, window_size.height).unwrap();
             }
@@ -501,6 +527,18 @@ impl PixelsRenderer {
             }
             self.update_fps(false);
             self.window.unwrap().request_redraw();
+        }
+    }
+
+    fn set_splash_screen(&mut self) {
+        if let Some(window) = self.window.as_ref() && let Some(pixels) = self.pixels.as_mut() {
+            let window_size = window.inner_size();
+            let image_src = image::load_from_memory(SPLASH_PNG).unwrap();
+            let splash_image = image_src.resize(window_size.width, window_size.height, image::imageops::FilterType::Nearest);
+            pixels.resize_buffer(splash_image.width(), splash_image.height()).unwrap();
+            self.pixels_dimension = (splash_image.width(),splash_image.height());
+            let frame_buffer = pixels.frame_mut();
+            frame_buffer.copy_from_slice(&splash_image.to_rgba8().into_raw());
         }
     }
 }
@@ -553,25 +591,37 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         pixels.set_present_mode(wgpu::PresentMode::Immediate); // can be changed to Fifo for VSync
         pixels.frame_mut().fill(0);
 
-        let image_src = image::load_from_memory(SPLASH_PNG).unwrap();
-        let splash_image = image_src.resize(window_size.width, window_size.height, image::imageops::FilterType::Nearest);
-        pixels.resize_buffer(splash_image.width(), splash_image.height()).unwrap();
-        let frame_buffer = pixels.frame_mut();
-        frame_buffer.copy_from_slice(&splash_image.to_rgba8().into_raw());
-        pixels.render().unwrap();
-
         self.window = Some(window_ref);
         self.pixels = Some(pixels);
+
+        self.set_splash_screen();
+
+        let frame_buffer = self.pixels.as_mut().unwrap().frame_mut();
+
+        // draw version
+        let font_size = window_size.width as f32 / DEFAULT_WIDTH as f32 * FONT_SIZE;
+        self.text_renderer.draw_text(frame_buffer,self.pixels_dimension.0,format!("Welcome to {} version {}",EMU_NAME,EMU_VERSION).as_str(),10,(self.pixels_dimension.1 - font_size as u32) as i32,font_size,[255,255,255,255]);
+
+        self.pixels.as_ref().unwrap().render().unwrap();
 
         // Init FPS timer
         self.fps_last = Instant::now();
         self.fps_frames = 0;
 
         window_ref.request_redraw();
+
+        let _ = self.gui_event_tx.send(GUIEvent::Ready);
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PS1Event) {
         match event {
+            PS1Event::SplashScreen => {
+                self.set_splash_screen();
+                if let Some(pixels) = &mut self.pixels {
+                    pixels.render().unwrap();
+                    self.window.unwrap().request_redraw();
+                }
+            }
             PS1Event::NewFrame(frame, last_performance) => {
                 if !self.iconified {
                     self.new_frame(&frame, last_performance);

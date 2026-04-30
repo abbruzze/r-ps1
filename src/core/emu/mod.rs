@@ -1,11 +1,12 @@
 use crate::audio::cpal::CpalAudioDevice;
 use crate::audio::{AudioDevice, AudioSample};
+use crate::cheats::Cheats;
+use crate::core::bios::PS1_BIOS_SET;
 use crate::core::cdrom::{CDOperation, CDRom, Region};
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
 use crate::core::config::{Config, RegionPolicyConfig};
 use crate::core::cpu::{disassembler, Cpu};
-use crate::core::{debugger, Resettable};
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
 use crate::core::debugger::{DebuggerResponse, RunMode};
 use crate::core::dma::{DMAController, DmaDevice, DummyDMAChannel};
@@ -15,21 +16,20 @@ use crate::core::mdec::{MDec, MDecIn, MDecOut};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{ArrayMemory, Memory, ReadMemoryAccess, BIOS_LEN};
 use crate::core::spu::{AdpcmInterpolation, Spu};
+use crate::core::{debugger, Resettable};
 use crate::log::Logger;
 use crate::renderer::{GUIEvent, Renderer};
 use build_time::build_time_local;
+use regex::Regex;
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use std::{fs, thread};
-use std::path::{Path, PathBuf};
 use thread::spawn;
-use regex::Regex;
 use tracing::{error, info, warn};
-use crate::cheats::Cheats;
-use crate::core::bios::PS1_BIOS_SET;
 
 pub const EMU_NAME : &str = env!("CARGO_PKG_NAME");
 pub const EMU_VERSION : &str = env!("CARGO_PKG_VERSION");
@@ -320,6 +320,12 @@ impl Emulator {
 
         let mut irq_handler = IrqHandler::new();
 
+        // before starting of main loop, sleep a while to let the splash screen to be visible
+        while let Ok(event) = self.gui_event_rx.recv() && !matches!(event,GUIEvent::Ready) {}
+            
+        thread::sleep(Duration::from_millis(2000));
+        self.gpu.borrow_mut().get_renderer_mut().set_splash_screen();
+
         if let Some(disc_path) = self.config.disc_path.clone() {
             self.load_disc(&disc_path,false);
         }
@@ -336,9 +342,6 @@ impl Emulator {
         self.bus.get_clock_mut().schedule_audio_sample();
 
         let debugger_enabled = self.config.debugger_enabled;
-
-        // before starting of main loop, sleep a while to let the splash screen to be visible
-        thread::sleep(Duration::from_millis(2000));
 
         'main_loop: while !self.shutting_down {
             if self.just_entered_in_step_mode {
@@ -443,7 +446,7 @@ impl Emulator {
     }
 
     fn check_input(&mut self) {
-        if let Ok(event) = self.gui_event_rx.try_recv(){
+        if let Ok(event) = self.gui_event_rx.try_recv() {
             match event {
                 GUIEvent::Control(controller_id,button, pressed) => {
                     //println!("Button {:?} pressed: {}",button,pressed);
@@ -481,6 +484,7 @@ impl Emulator {
                 GUIEvent::Reset(hard_reset) => {
                     self.reset_component(hard_reset);
                 }
+                GUIEvent::Ready => {}
             }
         }
     }

@@ -1,14 +1,16 @@
 pub mod pixels;
+mod text_renderer;
 
-use std::path::PathBuf;
-use std::sync::{mpsc, Arc};
 use crate::core::cdrom::{CDOperation, Region};
 use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
+use std::path::PathBuf;
+use std::sync::{mpsc, Arc};
 
 #[derive(Debug, Clone)]
 pub enum PS1Event {
     NewFrame(GPUFrameBuffer,u16),
+    SplashScreen,
     WarpMode(bool),
     Paused(bool),
     CDROMAccess(CDOperation),
@@ -28,6 +30,7 @@ pub enum GUIEvent {
     InsertDisc(PathBuf),
     Cheat,
     Reset(bool),
+    Ready,
 }
 
 /*
@@ -54,6 +57,7 @@ impl GPUFrameBuffer {
 pub type EmuStarter<R> = fn(R,mpsc::Receiver<GUIEvent>,Config);
 
 pub trait Renderer {
+    fn set_splash_screen(&mut self);
     fn render_frame(&mut self, frame: GPUFrameBuffer,last_performance:u16);
     fn set_warp_mode(&mut self,enabled:bool);
     fn set_paused(&mut self,paused:bool);
