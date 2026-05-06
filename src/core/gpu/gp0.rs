@@ -1,8 +1,8 @@
 use super::{Color, GP0Operation, Gp0State, SemiTransparency, TextureDepth, VRamCopyConfig, Vertex, GPU};
 use crate::core::clock::{Clock, EventType};
+use crate::core::gpu::timings::GPUTimings;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use tracing::{debug, warn};
-use crate::core::gpu::timings::GPUTimings;
 
 pub(super) const DITHER_TABLE: &[[i8; 4]; 4] = &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
 
@@ -411,12 +411,12 @@ impl GPU {
                 let src_y = ((src_coord >> 16) as u16) & 0x1FF;
                 let dest_x = (dest_coord as u16) & 0x3FF;
                 let dest_y = ((dest_coord >> 16) as u16) & 0x1FF;
-                let mut x_size = (((width_height as u16) - 1) & 0x3FF) + 1;
+                let mut x_size = (((width_height as u16).saturating_sub(1)) & 0x3FF) + 1;
                 if x_size == 0 {
                     x_size = 0x400
                 }
                 //x_size >>= 1; // x_size is in halfwords
-                let mut y_size = ((((width_height >> 16) as u16) - 1) & 0x1FF) + 1;
+                let mut y_size = ((((width_height >> 16) as u16).saturating_sub(1)) & 0x1FF) + 1;
                 if y_size == 0 {
                     y_size = 0x200;
                 }

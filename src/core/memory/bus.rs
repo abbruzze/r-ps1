@@ -1,22 +1,22 @@
+use crate::core::cdrom::CDRom;
+use crate::core::clock::{Clock, ClockConfig};
+use crate::core::config::Config;
 use crate::core::cpu::cop0::Cop0;
 use crate::core::cpu::Cpu;
 use crate::core::dma::DMAController;
 use crate::core::gpu::GPU;
 use crate::core::interrupt::{InterruptController, IrqHandler};
+use crate::core::mdec::MDec;
 use crate::core::memory::get_memory_map;
 use crate::core::memory::{ArrayMemory, MemoryMap, MemorySection, MemorySegment};
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 use crate::core::sio::SIO0;
+use crate::core::spu::Spu;
 use crate::core::timer::Timer;
+use crate::core::Resettable;
 use std::cell::RefCell;
 use std::rc::Rc;
 use tracing::{debug, info, warn};
-use crate::core::cdrom::CDRom;
-use crate::core::clock::{Clock, ClockConfig};
-use crate::core::config::Config;
-use crate::core::mdec::MDec;
-use crate::core::Resettable;
-use crate::core::spu::Spu;
 
 const DEBUG_MEM : bool = false;
 
@@ -231,7 +231,7 @@ impl Bus {
             cdrom: cdrom.clone(),
             spu: spu.clone(),
             mdec: mdec.clone(),
-            sio0: SIO0::new(true,true,config.controllers.tx_rx_cycles),
+            sio0: SIO0::new(config),
             io_ports: [0;IO_PORTS_LEN],
             scratchpad: vec![0; 0x400],
             cache_control_reg: 0,

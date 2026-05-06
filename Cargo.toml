@@ -27,12 +27,15 @@ fontdue = "0.9"
 [build-dependencies]
 embed-resource = "3.0.8"
 
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 opt-level = 2
 incremental = true
-codegen-units = 256
+codegen-units = 16
 debug = true
-lto = false
+lto = "thin"
 
 [profile.fast]
 inherits = "release"

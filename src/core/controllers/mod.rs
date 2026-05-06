@@ -1,8 +1,9 @@
 mod memory_card;
 
+use crate::core::config::ControllerConfig;
 use crate::core::controllers::memory_card::MemoryCard;
-use tracing::{debug, warn};
 use crate::core::Resettable;
+use tracing::{debug, warn};
 
 #[derive(Copy, Clone, Debug)]
 pub enum ControllerButton {
@@ -24,23 +25,49 @@ pub enum ControllerButton {
     Square,
 }
 
-#[derive(Debug,Default)]
-enum ControllerMode {
+#[derive(Copy, Clone, Debug)]
+pub enum MouseInfo {
+    RightButton(bool),
+    LeftButton(bool),
+    DXYMotion(i8,i8),
+}
+
+#[derive(Debug,Default,Copy, Clone)]
+pub enum ControllerType {
     #[default]
     Digital,
-    Analog
+    Analog,
+    Mouse,
 }
-impl ControllerMode {
+impl ControllerType {
     fn id(&self) -> u16 {
         match self {
-            ControllerMode::Digital => 0x5A41,
-            ControllerMode::Analog => 0x5A53,
+            ControllerType::Digital => 0x5A41,
+            ControllerType::Analog => 0x5A73,
+            ControllerType::Mouse => 0x5A12,
         }
     }
-    fn is_digital(&self) -> bool {
-        matches!(self, ControllerMode::Digital)
+    pub fn is_digital(&self) -> bool {
+        matches!(self, ControllerType::Digital)
+    }
+    pub fn is_analog(&self) -> bool {
+        matches!(self, ControllerType::Analog)
+    }
+    pub fn is_mouse(&self) -> bool {
+        matches!(self, ControllerType::Mouse)
     }
 }
+
+impl From<crate::core::config::ControllerType> for ControllerType {
+    fn from(value: crate::core::config::ControllerType) -> Self {
+        match value {
+            crate::core::config::ControllerType::Digital => ControllerType::Digital,
+            crate::core::config::ControllerType::Analog => ControllerType::Analog,
+            crate::core::config::ControllerType::Mouse => ControllerType::Mouse,
+        }
+    }
+}
+
 #[derive(Debug,Default)]
 enum ControllerState {
     #[default]
@@ -69,12 +96,25 @@ enum ControllerState {
     MemEndByteRead,
     MemEndByteWrite,
     MemGetIdEpilogue(usize),
+    // Mouse
+    MouseButtonsLo,
+    MouseButtonsHi,
+    MouseMovementLo,
+    MouseMovementHi,
 }
 #[derive(Debug)]
 enum MemoryCardCommand {
     Read,
     Write,
     GetId,
+}
+
+#[derive(Debug,Default)]
+struct MouseSwitches {
+    right_button: bool,
+    left_button: bool,
+    dx_motion: i8,
+    dy_motion: i8,
 }
 
 impl Resettable for Controller {
@@ -92,9 +132,10 @@ impl Resettable for Controller {
 #[derive(Debug)]
 pub struct Controller {
     id: u8,
-    mode: ControllerMode,
+    controller_type: ControllerType,
     digital_switches: u16,
     analog_switches: u32,
+    mouse_switches: MouseSwitches,
     state: ControllerState,
     connected: bool,
     memory_card: MemoryCard,
@@ -106,12 +147,13 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn new(id:u8,connected: bool) -> Controller {
+    pub fn new(id:u8,connected: bool,controller_type: ControllerType) -> Controller {
         Controller {
             id,
-            mode: ControllerMode::Digital,
+            controller_type,
             digital_switches: 0xFFFF,
             analog_switches: 0,
+            mouse_switches: MouseSwitches::default(),
             state: ControllerState::Init,
             connected,
             memory_card: MemoryCard::new(),
@@ -121,6 +163,10 @@ impl Controller {
             write_cheksum: 0,
 
         }
+    }
+
+    pub fn get_type(&self) -> &ControllerType {
+        &self.controller_type
     }
     
     pub fn save(&mut self) {
@@ -139,12 +185,26 @@ impl Controller {
         self.connected = connected;
     }
 
-    pub fn on_key(&mut self,key:ControllerButton,pressed:bool) {
+    pub fn on_controller_event(&mut self, key:ControllerButton, pressed:bool) {
         if self.connected {
             if pressed {
                 self.digital_switches &= !(1 << (key as u16));
             } else {
                 self.digital_switches |= 1 << (key as u16);
+            }
+        }
+    }
+    pub fn on_mouse_event(&mut self, event:MouseInfo) {
+        match event {
+            MouseInfo::RightButton(pressed) => {
+                self.mouse_switches.right_button = pressed;
+            }
+            MouseInfo::LeftButton(pressed) => {
+                self.mouse_switches.left_button = pressed;
+            }
+            MouseInfo::DXYMotion(dx,dy) => {
+                self.mouse_switches.dx_motion = dx;
+                self.mouse_switches.dy_motion = dy;
             }
         }
     }
@@ -401,23 +461,28 @@ impl Controller {
                     warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
                     self.state = ControllerState::Init;
                 }
-                self.mode.id() as u8
+                self.controller_type.id() as u8
             }
             ControllerState::IdHi => {
                 if self.last_cmd == 0x42 {
-                    self.state = ControllerState::SwLo;
+                    if self.controller_type.is_mouse() {
+                        self.state = ControllerState::MouseButtonsLo;
+                    }
+                    else {
+                        self.state = ControllerState::SwLo;
+                    }
                 }
                 else {
                     self.state = ControllerState::Init;
                 }
-                (self.mode.id() >> 8) as u8
+                (self.controller_type.id() >> 8) as u8
             }
             ControllerState::SwLo => {
                 self.state = ControllerState::SwHi;
                 self.digital_switches as u8
             }
             ControllerState::SwHi => {
-                self.state = if self.mode.is_digital() {
+                self.state = if self.controller_type.is_digital() {
                     ControllerState::Init
                 }
                 else {
@@ -470,7 +535,47 @@ impl Controller {
                     0xFF
                 }
             }
-            _ => unreachable!()
+            /*
+            __Halfword 1 (Mouse Buttons)__________________
+              0-7   Not used         (All bits always 1)
+              8-9   Unknown          (Seems to be always 0) (maybe SNES-style sensitivity?)
+              10    Right Button     (0=Pressed, 1=Released)
+              11    Left Button      (0=Pressed, 1=Released)
+              12-15 Not used         (All bits always 1)
+             */
+            ControllerState::MouseButtonsLo => {
+                self.state = ControllerState::MouseButtonsHi;
+                0xFF
+            }
+            ControllerState::MouseButtonsHi => {
+                self.state = ControllerState::MouseMovementLo;
+                let mut mouse_buttons_hi = 0xFC;
+                if self.mouse_switches.right_button {
+                    mouse_buttons_hi &= !0x04;
+                }
+                if self.mouse_switches.left_button {
+                    mouse_buttons_hi &= !0x08;
+                }
+                mouse_buttons_hi
+            }
+            /*
+            __Halfword 2 (Mouse Motion Sensors)___________
+              0-7   Horizontal Motion (-80h..+7Fh = Left..Right) (00h=No motion)
+              8-15  Vertical Motion   (-80h..+7Fh = Up..Down)    (00h=No motion)
+             */
+            ControllerState::MouseMovementLo => {
+                self.state = ControllerState::MouseMovementHi;
+                let x_motion = self.mouse_switches.dx_motion;
+                self.mouse_switches.dx_motion = 0;
+                x_motion as u8
+            }
+            ControllerState::MouseMovementHi => {
+                self.state = ControllerState::Init;
+                let y_motion = self.mouse_switches.dy_motion;
+                self.mouse_switches.dy_motion = 0;
+                y_motion as u8
+            }
+            _ => unreachable!("Controller state: {:?}",self.state)
         };
 
         byte

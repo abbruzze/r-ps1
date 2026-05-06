@@ -7,15 +7,15 @@ mod timings;
 
 use crate::core::clock::Clock;
 use crate::core::clock::EventType;
+use crate::core::config::Config;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
+use crate::core::Resettable;
 use crate::renderer::{GPUFrameBuffer, Renderer};
 use std::cmp;
 use std::sync::Arc;
 use tracing::info;
-use crate::core::config::Config;
-use crate::core::Resettable;
 /*
 GPU Versions
 Summary of GPU Differences
@@ -992,8 +992,9 @@ impl GPU {
 
         let mut frame_buffer = vec![0u8; crt_width * crt_height << 2]; // RGBA8
         if !self.display_config.display_disabled {
-            let vram_x0 = self.display_config.vram_x_start as usize;
-            let vram_y0 = self.display_config.vram_y_start as usize;
+            let vram_x0 = if self.show_whole_vram { 0 } else { self.display_config.vram_x_start as usize };
+            let vram_y0 = if self.show_whole_vram { 0 } else { self.display_config.vram_y_start as usize };
+
             let is24_bit = !self.show_whole_vram && matches!(self.display_config.display_depth,DisplayDepth::D24Bits);
             let row_offset_base = crt_start_y_offset * (crt_width << 2) + (crt_start_x_offset << 2);
             for y in 0..frame_height.min(crt_height) {

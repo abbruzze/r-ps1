@@ -5,7 +5,8 @@ use crate::core::bios::PS1_BIOS_SET;
 use crate::core::cdrom::{CDOperation, CDRom, Region};
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
-use crate::core::config::{Config, RegionPolicyConfig};
+use crate::core::config::{Config, ControllerType, RegionPolicyConfig};
+use crate::core::controllers::MouseInfo;
 use crate::core::cpu::{disassembler, Cpu};
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
 use crate::core::debugger::{DebuggerResponse, RunMode};
@@ -18,14 +19,14 @@ use crate::core::memory::{ArrayMemory, Memory, ReadMemoryAccess, BIOS_LEN};
 use crate::core::spu::{AdpcmInterpolation, Spu};
 use crate::core::{debugger, Resettable};
 use crate::log::Logger;
-use crate::renderer::{GUIEvent, Renderer};
+use crate::renderer::{GUIEvent, MouseAccumulator, Renderer};
 use build_time::build_time_local;
 use regex::Regex;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use std::{fs, thread};
 use thread::spawn;
@@ -101,6 +102,8 @@ pub struct Emulator {
     cheats: Cheats,
     cheats_on: bool,
     shutting_down: bool,
+    mouse_accumulator: Arc<MouseAccumulator>,
+    mouse_enabled: bool,
 }
 
 impl Resettable for Emulator {
@@ -140,6 +143,8 @@ impl Emulator {
 
         info!("Building emulator ...");
         let cpu = Cpu::new(&config);
+
+        let mouse_acc = renderer.get_mouse_accumulator();
 
         let mdec = Rc::new(RefCell::new(MDec::new()));
         let mdec_in = Rc::new(RefCell::new(MDecIn::new(&mdec)));
@@ -187,7 +192,12 @@ impl Emulator {
             cheats: Cheats::new(),
             cheats_on: false,
             shutting_down: false,
+            mouse_accumulator: mouse_acc,
+            mouse_enabled: false,
         };
+
+        // mouse
+        emu.mouse_enabled = matches!(emu.config.controllers.controller_1.controller_type,ControllerType::Mouse) || matches!(emu.config.controllers.controller_2.controller_type,ControllerType::Mouse);
 
         // cheats
         if emu.config.cheats_config.cheats_enabled {
@@ -327,7 +337,7 @@ impl Emulator {
         self.gpu.borrow_mut().get_renderer_mut().set_splash_screen();
 
         if let Some(disc_path) = self.config.disc_path.clone() {
-            self.load_disc(&disc_path,false);
+            self.load_disc(&disc_path,true);
         }
 
         self.just_entered_in_step_mode = false;
@@ -406,6 +416,17 @@ impl Emulator {
                     if self.config.cheats_config.cheats_enabled && self.cheats_on {
                         self.cheats.apply(&mut self.bus);
                     }
+                    // mouse
+                    if self.mouse_enabled {
+                        let (dx, dy, is_left_pressed, is_right_pressed) = self.mouse_accumulator.consume();
+                        if let Some(mouse) = self.bus.get_sio0_mut().get_mouse_controller_mut() {
+                            mouse.on_mouse_event(MouseInfo::DXYMotion(dx.clamp(-128, 127) as i8, dy.clamp(-128, 127) as i8));
+                        }
+                        if let Some(mouse) = self.bus.get_sio0_mut().get_mouse_controller_mut() {
+                            mouse.on_mouse_event(MouseInfo::LeftButton(is_left_pressed));
+                            mouse.on_mouse_event(MouseInfo::RightButton(is_right_pressed));
+                        }
+                    }
                 }
             }
             EventType::Timer0 => {
@@ -448,9 +469,9 @@ impl Emulator {
     fn check_input(&mut self) {
         if let Ok(event) = self.gui_event_rx.try_recv() {
             match event {
-                GUIEvent::Control(controller_id,button, pressed) => {
+                GUIEvent::Controller(controller_id, button, pressed) => {
                     //println!("Button {:?} pressed: {}",button,pressed);
-                    self.bus.get_sio0_mut().get_controller_mut(controller_id).on_key(button,pressed);
+                    self.bus.get_sio0_mut().get_controller_mut(controller_id).on_controller_event(button, pressed);
                 }
                 GUIEvent::WarpMode => {
                     self.warp_mode_enabled ^= true;

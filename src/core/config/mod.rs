@@ -1,9 +1,9 @@
+use crate::core::controllers::ControllerButton;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use tracing::error;
 use winit::keyboard::KeyCode;
-use crate::core::controllers::ControllerButton;
 
 pub fn parse_keycode(s: &str) -> Option<KeyCode> {
     match s {
@@ -359,10 +359,19 @@ pub enum RegionPolicyConfig {
     Europe
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize,Default, Copy)]
+pub enum ControllerType {
+    #[default]
+    Digital,
+    Analog,
+    Mouse,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControllerConfig {
+    pub controller_type: ControllerType,
     pub controller_enabled: bool,
-    pub controller_keymap: ControllerKeyMapping,
+    pub controller_keymap: Option<ControllerKeyMapping>,
     pub memory_card_path: Option<String>,
     pub attach_to_usb: bool,
 }
@@ -381,14 +390,16 @@ impl Default for ControllersConfig {
     fn default() -> Self {
         Self {
             controller_1: ControllerConfig {
+                controller_type: ControllerType::Digital,
                 controller_enabled: true,
-                controller_keymap: ControllerKeyMapping::default_controller_1(),
+                controller_keymap: Some(ControllerKeyMapping::default_controller_1()),
                 memory_card_path: None,
                 attach_to_usb: true,
             },
             controller_2: ControllerConfig {
+                controller_type: ControllerType::Digital,
                 controller_enabled: true,
-                controller_keymap: ControllerKeyMapping::default_controller_2(),
+                controller_keymap: Some(ControllerKeyMapping::default_controller_2()),
                 memory_card_path: None,
                 attach_to_usb: true,
             },

@@ -1,12 +1,13 @@
-use std::collections::VecDeque;
-use tracing::{debug, info, warn};
 use crate::core::clock::{Clock, EventType};
-use crate::core::{Resettable, CPU_CLOCK};
+use crate::core::config::Config;
 use crate::core::controllers::Controller;
 use crate::core::interrupt::{InterruptType, IrqHandler};
+use crate::core::{Resettable, CPU_CLOCK};
+use std::collections::VecDeque;
+use tracing::{debug, info, warn};
 
 // some attempts here...
-const TX_RX_DATA_CYCLES : usize = 10; //(10 * CPU_CLOCK / 250_000) as u64; // 8 bit sent + 8 bit received at 250 kbps
+//const TX_RX_DATA_CYCLES : usize = 10; //(10 * CPU_CLOCK / 250_000) as u64; // 8 bit sent + 8 bit received at 250 kbps
 const ACK_TIMEOUT_CYCLES : u64 = 100;
 
 /*
@@ -35,8 +36,8 @@ pub struct SIO0 {
     rx_fifo: VecDeque<u8>,
     tx_idle:bool,
     ack_asserted: bool,
-    start_timer_timestamp: u64,
-    response_cycles: u64,
+    timer_target_timestamp: u64,
+    response_cycles: Option<u64>,
 }
 
 impl Resettable for SIO0 {
@@ -53,18 +54,31 @@ impl Resettable for SIO0 {
         self.rx_fifo.clear();
         self.tx_idle = true;
         self.ack_asserted = false;
-        self.start_timer_timestamp = 0;
+        self.timer_target_timestamp = 0;
         info!("SIO0 reset done");
     }
 }
 
 impl SIO0 {
-    pub fn new(c1_connected:bool,c2_connected:bool,response_cycles:Option<usize>) -> SIO0 {
-        info!("Controller tx_rx cycles set to {} cycles",response_cycles.unwrap_or(TX_RX_DATA_CYCLES));
+    pub fn new(config:&Config) -> SIO0 {
+        let response_cycles = config.controllers.tx_rx_cycles;
+        if let Some(cycles) = response_cycles.as_ref() {
+            info!("Controller tx_rx cycles forced to {} cycles",cycles);
+        }
+
         SIO0 {
             baud: 0,
             mode: 0,
-            controllers: [Controller::new(0,c1_connected),Controller::new(1,c2_connected)],
+            controllers: [
+                Controller::new(0,
+                                config.controllers.controller_1.controller_enabled,
+                                crate::core::controllers::ControllerType::from(config.controllers.controller_1.controller_type)
+                ),
+                Controller::new(1,
+                                config.controllers.controller_2.controller_enabled,
+                                crate::core::controllers::ControllerType::from(config.controllers.controller_2.controller_type)
+                )
+            ],
             selected_device: None,
             irq: false,
             ctrl: 0,
@@ -72,13 +86,17 @@ impl SIO0 {
             rx_fifo: VecDeque::with_capacity(8),
             tx_idle: true,
             ack_asserted: false,
-            start_timer_timestamp: 0,
-            response_cycles: (response_cycles.unwrap_or(TX_RX_DATA_CYCLES) * CPU_CLOCK / 250_000) as u64,
+            timer_target_timestamp: 0,
+            response_cycles: response_cycles.map(|rc| (rc * CPU_CLOCK / 250_000) as u64),
         }
     }
 
     pub fn get_controller_mut(&mut self,index:usize) -> &mut Controller {
         &mut self.controllers[index]
+    }
+
+    pub fn get_mouse_controller_mut(&mut self) -> Option<&mut Controller> {
+        self.controllers.iter_mut().find(|c| c.get_type().is_mouse())
     }
     /*
     1F801048h+N*10h - SIO#_MODE (R/W) (eg. 004Eh --> 8N1 with Factor=MUL16)
@@ -214,18 +232,23 @@ impl SIO0 {
     fn reschedule(&mut self,clock:&mut Clock) {
         self.tx_idle = false;
 
-        /*
-        let factor = match self.mode & 3 {
-            0 | 1 => 1,
-            2 => 16,
-            3 => 64,
-            _ => unreachable!()
-        };
-        let cycles = (self.baud * factor) << 4; // * 16 = 2 x 8 bit
-        */
+        let cycles = if let Some(cycles) = self.response_cycles.as_ref() {
+            *cycles
+        }
+        else {
+            let factor = match self.mode & 3 {
+                0 => 1,
+                1 => 2,
+                2 => 16,
+                3 => 64,
+                _ => unreachable!()
+            };
 
-        self.start_timer_timestamp = clock.current_time();
-        clock.schedule(EventType::SIO0Byte, self.response_cycles);
+            (self.baud * factor / 2 * 10) as u64
+        };
+
+        self.timer_target_timestamp = clock.current_time() + cycles;
+        clock.schedule(EventType::SIO0Byte, cycles);
     }
 
     pub fn on_event(&mut self,event:EventType,clock:&mut Clock,interrupt_handler:&mut IrqHandler) {
@@ -345,7 +368,8 @@ impl SIO0 {
             status |= 0x200;
         }
         // baud rate timer
-        status |= ((clock.current_time() - self.start_timer_timestamp) as u32) << 11;
+        status |= (self.timer_target_timestamp.saturating_sub(clock.current_time()) as u32) << 11;
+
         status
     }
     

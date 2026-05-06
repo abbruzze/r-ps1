@@ -1,7 +1,7 @@
-use super::{text_renderer, CDOperation, GUIEvent};
+use super::{text_renderer, CDOperation, GUIEvent, MouseAccumulator};
 use super::{EmuStarter, GPUFrameBuffer, PS1Event, Renderer};
 use crate::core::cdrom::Region;
-use crate::core::config::Config;
+use crate::core::config::{Config, ControllerType};
 use crate::core::controllers::ControllerButton;
 use crate::core::emu::EMU_NAME;
 use crate::core::emu::EMU_VERSION;
@@ -11,23 +11,23 @@ use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer
 use gilrs::{Event, EventType, Gilrs};
 use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Instant;
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{Fullscreen, Icon, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Icon, Window, WindowId};
 
 static ICON_PNG: &[u8] = include_bytes!("../../resources/r-ps1_icon_32x32.png");
 static SPLASH_PNG: &[u8] = include_bytes!("../../resources/r-ps1_splash.png");
 
-const DEFAULT_WIDTH: usize = 640;
-const DEFAULT_HEIGHT: usize = 480;
-const DEFAULT_SCALE: usize = 1;
+const DEFAULT_SCALE: f64 = 1.25;
+const DEFAULT_WIDTH: usize = (640.0 * DEFAULT_SCALE) as usize;
+const DEFAULT_HEIGHT: usize = (480.0 * DEFAULT_SCALE) as usize;
 
 const FONT_SIZE: f32 = 14.0;
 
@@ -35,11 +35,12 @@ const FPS_PERIOD_MILLIS: u128 = 600;
 
 pub struct GPUPixelsRenderer {
     event_proxy: EventLoopProxy<PS1Event>,
+    mouse_acc: Arc<MouseAccumulator>,
 }
 
 impl GPUPixelsRenderer {
-    pub fn new(event_proxy: EventLoopProxy<PS1Event>) -> Self {
-        Self { event_proxy }
+    pub fn new(event_proxy: EventLoopProxy<PS1Event>, mouse_acc:Arc<MouseAccumulator>) -> Self {
+        Self { event_proxy, mouse_acc }
     }
 }
 
@@ -68,6 +69,9 @@ impl Renderer for GPUPixelsRenderer {
     fn set_audio_mute(&mut self,mute:bool) {
         let _ = self.event_proxy.send_event(PS1Event::AudioMute(mute));
     }
+    fn get_mouse_accumulator(&self) -> Arc<MouseAccumulator> {
+        Arc::clone(&self.mouse_acc)
+    }
 }
 
 pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
@@ -83,7 +87,10 @@ pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
     let usb_config = config.clone();
     let emu_config = config.clone();
 
-    thread::spawn(move || start(GPUPixelsRenderer::new(proxy),gui_event_rx,emu_config));
+    let mouse_acc = MouseAccumulator::new();
+    let mouse_acc_proxy = mouse_acc.clone();
+
+    thread::spawn(move || start(GPUPixelsRenderer::new(proxy,mouse_acc),gui_event_rx,emu_config));
     if config.controllers.controller_1.attach_to_usb || config.controllers.controller_2.attach_to_usb {
         thread::spawn(move || usb_controller_loop(usb_config, usb_event_tx));
     }
@@ -92,7 +99,7 @@ pub fn run_loop(start:EmuStarter<GPUPixelsRenderer>,config:Config) {
     }
 
     // start gui
-    let mut gui = PixelsRenderer::new(DEFAULT_SCALE, gui_event_tx, config);
+    let mut gui = PixelsRenderer::new(gui_event_tx, config,mouse_acc_proxy);
     event_loop.run_app(&mut gui).unwrap();
 }
 
@@ -120,11 +127,11 @@ impl USBDirections {
 
         if self.left != left {
             self.left = left;
-            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Left, left));
+            let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, ControllerButton::Left, left));
         }
         if self.right != right {
             self.right = right;
-            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Right, right));
+            let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, ControllerButton::Right, right));
         }
     }
     pub fn up_down_changed(&mut self,value:f32,gui_event_tx:&mpsc::Sender<GUIEvent>,controller_id:usize) {
@@ -133,11 +140,11 @@ impl USBDirections {
 
         if self.up != up {
             self.up = up;
-            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Up, up));
+            let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, ControllerButton::Up, up));
         }
         if self.down != down {
             self.down = down;
-            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, ControllerButton::Down, down));
+            let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, ControllerButton::Down, down));
         }
     }
 }
@@ -215,12 +222,12 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
                 EventType::ButtonPressed(button,_code) => {
                     match usb_buttons_map.get(&button) {
                         Some(button) => {
-                            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, *button, true));
+                            let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, *button, true));
                         }
                         None => {
                             match dpad_2_axis_button(button) {
                                 Some(button) => {
-                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, true));
+                                    let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, button, true));
                                 }
                                 None => {}
                             }
@@ -230,12 +237,12 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
                 EventType::ButtonReleased(button,_code) => {
                     match usb_buttons_map.get(&button) {
                         Some(button) => {
-                            let _ = gui_event_tx.send(GUIEvent::Control(controller_id, *button, false));
+                            let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, *button, false));
                         }
                         None => {
                             match dpad_2_axis_button(button) {
                                 Some(button) => {
-                                    let _ = gui_event_tx.send(GUIEvent::Control(controller_id, button, false));
+                                    let _ = gui_event_tx.send(GUIEvent::Controller(controller_id, button, false));
                                 }
                                 None => {}
                             }
@@ -267,7 +274,6 @@ struct PixelsRenderer {
     height: usize,
     visible_width: usize,
     visible_height: usize,
-    scale: usize,
     fps_last: Instant,
     fps_frames: u32,
     gui_event_tx: mpsc::Sender<GUIEvent>,
@@ -291,10 +297,12 @@ struct PixelsRenderer {
     full_screen: bool,
     key_modifiers : ModifiersState,
     text_renderer: TextRenderer,
+    mouse_acc: Arc<MouseAccumulator>,
+    mouse_enabled: bool,
 }
 
 impl PixelsRenderer {
-    pub fn new(scale: usize,gui_event_tx: mpsc::Sender<GUIEvent>,config: Config) -> Self {
+    pub fn new(gui_event_tx: mpsc::Sender<GUIEvent>,config: Config, mouse_acc: Arc<MouseAccumulator>) -> Self {
         let mut renderer = Self {
             window: None,
             pixels: None,
@@ -303,7 +311,6 @@ impl PixelsRenderer {
             height : DEFAULT_HEIGHT,
             visible_width: 0,
             visible_height: 0,
-            scale,
             fps_last: Instant::now(),
             fps_frames: 0,
             gui_event_tx,
@@ -327,9 +334,12 @@ impl PixelsRenderer {
             full_screen: false,
             key_modifiers: ModifiersState::default(),
             text_renderer: TextRenderer::new(),
+            mouse_acc: mouse_acc.clone(),
+            mouse_enabled: false,
         };
 
         renderer.full_screen = renderer.config.gpu_config.start_full_screen;
+        renderer.mouse_enabled = matches!(renderer.config.controllers.controller_1.controller_type,ControllerType::Mouse) || matches!(renderer.config.controllers.controller_2.controller_type,ControllerType::Mouse);
 
         if let Some(renderer_type) = renderer.config.gpu_config.rendering_type.as_ref() {
             match renderer_type.to_uppercase().as_str() {
@@ -552,14 +562,20 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         let window_attrs = Window::default_attributes()
             .with_title(format!("{} - Starting up ...",EMU_NAME))
             .with_inner_size(winit::dpi::LogicalSize::new(
-                (self.width * self.scale) as u32,
-                (self.height * self.scale) as u32,
+                self.width as u32,
+                self.height as u32,
             ))
             .with_window_icon(Some(icon))
             .with_resizable(true);
 
         let window = event_loop.create_window(window_attrs).unwrap();
         let window_ref: &'static Window = Box::leak(Box::new(window));
+
+        if self.mouse_enabled {
+            window_ref.set_cursor_visible(false);
+            window_ref.set_cursor_grab(CursorGrabMode::Locked).or_else(|_e| window_ref.set_cursor_grab(CursorGrabMode::Confined)).unwrap();
+            info!("Mouse enabled: hiding cursor and confining it inside window ...");
+        }
 
         if self.full_screen {
             window_ref.set_fullscreen(Some(Fullscreen::Borderless(None)));
@@ -666,6 +682,17 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
         }
     }
 
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, event: DeviceEvent) {
+        match event {
+            DeviceEvent::MouseMotion { delta } => {
+                if self.mouse_enabled {
+                    self.mouse_acc.move_delta(delta.0 as i32, delta.1 as i32);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::DroppedFile(file) => {
@@ -690,6 +717,16 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                     }
                     if pixels.resize_surface(new_size.width, new_size.height).is_err() {
                         println!("Pixels surface resize error");
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if self.mouse_enabled {
+                    let is_left = matches!(button,MouseButton::Left);
+                    if is_left {
+                        self.mouse_acc.set_left_button_pressed(state.is_pressed());
+                    } else {
+                        self.mouse_acc.set_right_button_pressed(state.is_pressed());
                     }
                 }
             }
@@ -743,19 +780,11 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                         }
                     }
 
-                    match self.config.controllers.controller_1.controller_keymap.map_key(keycode) {
-                        Some(button) => {
-                            let _ = self.gui_event_tx.send(GUIEvent::Control(0,button, self.last_key));
-                            //println!("Button {:?} [{}]",button,self.last_key_repeat_state);
-                        }
-                        None => {
-                            match self.config.controllers.controller_2.controller_keymap.map_key(keycode) {
-                                Some(button) => {
-                                    let _ = self.gui_event_tx.send(GUIEvent::Control(1,button, self.last_key));
-                                }
-                                None => {}
-                            }
-                        }
+                    if let Some(map_key) = self.config.controllers.controller_1.controller_keymap.as_ref() && let Some(button) = map_key.map_key(keycode) {
+                        let _ = self.gui_event_tx.send(GUIEvent::Controller(0, button, self.last_key));
+                    }
+                    else if let Some(map_key) = self.config.controllers.controller_2.controller_keymap.as_ref() && let Some(button) = map_key.map_key(keycode) {
+                        let _ = self.gui_event_tx.send(GUIEvent::Controller(1, button, self.last_key));
                     }
                 }
             }
