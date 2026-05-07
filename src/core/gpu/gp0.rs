@@ -570,8 +570,9 @@ impl GPU {
                 let height = ((width_height >> 16) as u16) & 0x1FF;
                 debug!("Executing Quick VRam Fill color={:04X} pos=({},{}) width={} height={}",fill_color,x_pos,y_pos,width,height);
                 for y in 0..height {
+                    let target_y = y_pos + y;
                     for x in 0..width {
-                        self.draw_pixel_offset(self.get_vram_offset_15(x_pos + x, y_pos + y), fill_color, false, false,None);
+                        self.draw_pixel_offset(self.get_vram_offset_15(x_pos + x, target_y), fill_color, false, false,None);
                     }
                 }
                 self.gp0state = Gp0State::WaitingCommand;
