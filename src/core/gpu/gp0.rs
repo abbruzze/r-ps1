@@ -286,10 +286,6 @@ impl GPU {
         (((y & 0x1FF) as usize) << 11) + (((x & 0x3FF) as usize) << 1) // y * 2048 + x * 2
     }
     #[inline]
-    pub(super) fn get_vram_offset_24(&self, x:u16, y:u16) -> usize {
-        (((y & 0x1FF) as usize) << 11) + (((x & 0x3FF) as usize) * 3)
-    }
-    #[inline]
     pub(super) fn get_pixel_15(&self, offset:usize) -> u16 {
         self.vram[offset] as u16 | (self.vram[offset + 1] as u16) << 8
     }

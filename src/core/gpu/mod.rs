@@ -1000,11 +1000,10 @@ impl GPU {
             for y in 0..frame_height.min(crt_height) {
                 let mut row_offset = y * (crt_width << 2) + row_offset_base;
                 for x in 0..frame_width.min(crt_width) {
-                    let vram_x = vram_x0 + x;
                     let vram_y = vram_y0 + y;
 
                     let (r, g, b) = if is24_bit {
-                        let byte_offset = self.get_vram_offset_24(vram_x as u16, vram_y as u16);
+                        let byte_offset = ((vram_y & 0x1FF) << 11) + (vram_x0 * 2 + (x & 0x3FF) * 3);
                         if byte_offset + 2 < self.vram.len() {
                             let r = self.vram[byte_offset];
                             let g = self.vram[byte_offset + 1];
@@ -1014,6 +1013,7 @@ impl GPU {
                             continue;
                         }
                     } else {
+                        let vram_x = vram_x0 + x;
                         let pixel = self.get_pixel_15(self.get_vram_offset_15(vram_x as u16, vram_y as u16));
 
                         let r = RGB5_TO_RGB8[(pixel & 0x1F) as usize];
