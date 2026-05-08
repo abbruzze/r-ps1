@@ -1,8 +1,8 @@
+use crate::core::cdrom::disc::{AudioLeftRight, DiscTime, TrackType, BCD};
+use crate::core::cdrom::{CDRom, Command, CommandState, DriveState, PendingIrq, Region, CDROM_VER};
+use crate::core::interrupt::IrqHandler;
 use std::process::exit;
 use tracing::{debug, error, info, warn};
-use crate::core::cdrom::{CDRom, Command, CommandState, DriveState, PendingIrq, Region, CDROM_VER};
-use crate::core::cdrom::disc::{AudioLeftRight, DiscTime, TrackType, BCD};
-use crate::core::interrupt::IrqHandler;
 
 pub(super) const INT1 : u8 = 0x01;
 pub(super) const INT2 : u8 = 0x02;
@@ -110,7 +110,7 @@ impl CDRom {
     }
 
     fn process_command(&mut self, cmd: u8) -> CommandState {
-        info!("CDROM processing command {:02X}",cmd);
+        debug!("CDROM processing command {:02X}",cmd);
         match Command::from_u8(cmd) {
             Some(command) => {
                 if !command.parameters_number().contains(&self.parameter_fifo.len()) {
@@ -129,7 +129,7 @@ impl CDRom {
     }
 
     fn process_2nd_response(&mut self, cmd: Command) -> CommandState {
-        info!("CDROM processing 2nd response for command {:?}",cmd);
+        debug!("CDROM processing 2nd response for command {:?}",cmd);
         self.execute_command(cmd, true)
     }
 
@@ -266,7 +266,7 @@ impl CDRom {
 
         if let Some(loc) = DiscTime::new_checked(min, sec, frame) {
             self.pending_setloc = Some(loc);
-            info!("CDROM setloc to {}",loc);
+            debug!("CDROM setloc to {}",loc);
             self.make_stat_response(INT3, Command::Setloc)
         } else {
             error!("CDROM invalid setloc {:02X}:{:02X}:{:02X}",min,sec,frame);
@@ -285,7 +285,7 @@ impl CDRom {
                 match self.pending_setloc.take() {
                     Some(loc) => {
                         seeking_cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
-                        info!("CDROM seeking before playing {}",loc);
+                        debug!("CDROM seeking before playing {}",loc);
                         disc.seek_sector(loc);
                     }
                     _ => {}
@@ -301,7 +301,7 @@ impl CDRom {
             if !matches!(self.drive_state,DriveState::Playing { .. }) { // fixes motorhead
                 self.drive_state = DriveState::Playing { first_sector_cycles, sample_index: 0, report_counter: 1, report_absolute: true, seeking_cycles };
             }
-            info!("CDROM play track {track} at loc {:?} seeking cycles: {seeking_cycles}",disc.get_head_position());
+            debug!("CDROM play track {track} at loc {:?} seeking cycles: {seeking_cycles}",disc.get_head_position());
 
             self.make_stat_response(INT3,Command::Play)
         }
@@ -312,7 +312,7 @@ impl CDRom {
     // SeekL - Command 15h --> INT3(stat) --> INT2(stat)
     fn command_seek(&mut self, second_response: bool) -> CommandState {
         if second_response {
-            info!("CDROM seeking loc {} completed",self.pending_setloc.as_ref().map(|loc|loc.to_string()).unwrap_or_else(||"unknown".to_string()) );
+            debug!("CDROM seeking loc {} completed",self.pending_setloc.as_ref().map(|loc|loc.to_string()).unwrap_or_else(||"unknown".to_string()) );
             if let Some(disc) = self.disc.as_mut() {
                 if let Some(loc) = self.pending_setloc.take() {
                     disc.seek_sector(loc);
@@ -326,7 +326,7 @@ impl CDRom {
             let seek_cycles = match (self.disc.as_ref(), self.pending_setloc.as_ref()) {
                 (Some(disc), Some(loc)) => {
                     let cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
-                    info!("CDROM seekl from {} to {} approx cycles={}",disc.get_head_position(),loc,cycles);
+                    debug!("CDROM seekl from {} to {} approx cycles={}",disc.get_head_position(),loc,cycles);
                     cycles
                 },
                 _ => FIRST_RESPONSE_IRQ_DELAY_44100
@@ -353,12 +353,12 @@ impl CDRom {
         let sub_function = self.parameter_fifo.pop_front().unwrap();
         match sub_function {
             0x04 => {
-                info!("CDROM test sub function 0x04");
+                debug!("CDROM test sub function 0x04");
                 self.activate_motor(true);
                 self.make_stat_response(INT3,Command::Test)
             }
             0x05 => {
-                info!("CDROM test sub function 0x05");
+                debug!("CDROM test sub function 0x05");
                 self.make_response(
                     Command::Test,
                     INT3,
@@ -369,7 +369,7 @@ impl CDRom {
                 )
             }
             0x20 => {
-                info!("CDROM test sub function 0x20: sending {:?}",CDROM_VER);
+                debug!("CDROM test sub function 0x20: sending {:?}",CDROM_VER);
                 self.make_response(
                     Command::Test,
                     INT3,
@@ -415,13 +415,13 @@ impl CDRom {
             if let Some(disc) = self.disc.as_ref() {
                 // check for audio disc
                 if disc.is_audio_cd() {
-                    info!("CDROM get_id error: audio-cd");
+                    debug!("CDROM get_id error: audio-cd");
                     self.make_error_response(Command::GetID, 0x80, (false, false, true)) // cannot response yet
                 } else {
                     // Licensed:Mode2         INT3(stat)     INT2(02h,00h, 20h,00h, 53h,43h,45h,4xh)
                     let mode = if matches!(disc.get_tracks()[0].track_type(),TrackType::Data(2,_)) { 0x20 } else { 0x00 };
                     let region = disc.get_region().unwrap_or(Region::USA).to_scee_letter() as u8;
-                    info!("CDROM executing get_id region={:?}:",region);
+                    debug!("CDROM executing get_id region={:?}:",region);
                     self.make_response(
                         Command::GetID,
                         INT2,
@@ -454,7 +454,7 @@ impl CDRom {
     // ReadTOC - Command 1Eh --> INT3(stat) --> INT2(stat)
     fn command_read_toc(&mut self, second_response: bool) -> CommandState {
         if second_response {
-            info!("CDROM read_toc completed");
+            debug!("CDROM read_toc completed");
             self.make_stat_response(INT2, Command::ReadTOC)
         } else {
             self.make_response(
@@ -496,7 +496,7 @@ impl CDRom {
             // preserve last sector size bit
             self.mode = (self.mode & !(1 << 5)) | (prev_mode & (1 << 5));
         }
-        info!("CDROM set mode to {:02X}, speed={:?} sector size={:?} ignore_bit={ignore_bit} cd-da:{} report={}",self.mode,self.get_speed(),self.get_sector_size(),(self.mode & 1) != 0,(self.mode & 4) != 0);
+        debug!("CDROM set mode to {:02X}, speed={:?} sector size={:?} ignore_bit={ignore_bit} cd-da:{} report={}",self.mode,self.get_speed(),self.get_sector_size(),(self.mode & 1) != 0,(self.mode & 4) != 0);
         self.make_stat_response(INT3, Command::SetMode)
     }
     // ReadN/S - Command 06h --> INT3(stat) --> INT1(stat) --> datablock
@@ -506,13 +506,13 @@ impl CDRom {
             match (self.disc.as_mut(),self.pending_setloc.take()) {
                 (Some(disc),Some(loc)) => {
                     seeking_cycles = Self::get_approx_seek_cycles_44100(&disc.get_head_position(), &loc);
-                    info!("CDROM seeking before reading {} -> {}",disc.get_head_position(),loc);
+                    debug!("CDROM seeking before reading {} -> {}",disc.get_head_position(),loc);
                     disc.seek_sector(loc);
                 }
                 _ => {}
             }
             let next_sector_cycles = Self::get_cycles_per_ms_44100(self.get_speed().get_read_sector_ms());
-            info!("CDROM reading next sector in {next_sector_cycles} cycles seeking cycles {seeking_cycles} [{} ms]",self.get_speed().get_read_sector_ms());
+            debug!("CDROM reading next sector in {next_sector_cycles} cycles seeking cycles {seeking_cycles} [{} ms]",self.get_speed().get_read_sector_ms());
             self.change_drive_state(DriveState::Reading { next_sector_cycles, seeking_cycles: 0 }); // seeking cycles prevent running gran turismo 2
             CommandState::Idle
         }
@@ -535,7 +535,7 @@ impl CDRom {
         if let Some(loc) = self.pending_setloc.take() {
             if let Some(disc) = self.disc.as_mut() {
                 disc.seek_sector(loc);
-                info!("CDROM start reading from loc {} previous data in queue: {}",disc.get_head_position(),self.data_buffer.len());
+                debug!("CDROM start reading from loc {} previous data in queue: {}",disc.get_head_position(),self.data_buffer.len());
             }
         }
 
@@ -552,7 +552,7 @@ impl CDRom {
     // Pause - Command 09h --> INT3(stat) --> INT2(stat)
     fn command_pause(&mut self, second_response: bool) -> CommandState {
         if second_response {
-            info!("CDROM executing pause from drive state: {:?}",self.drive_state);
+            debug!("CDROM executing pause from drive state: {:?}",self.drive_state);
             self.make_stat_response(INT2, Command::Pause)
         } else {
             let response = self.make_response(
@@ -584,7 +584,7 @@ impl CDRom {
             self.mode = 0x20;
             self.data_buffer.clear();
             self.activate_motor(true);
-            info!("CDROM init executed");
+            debug!("CDROM init executed");
             self.change_drive_state(DriveState::Idle);
             self.make_stat_response(INT2, Command::Init)
         } else {
@@ -606,7 +606,7 @@ impl CDRom {
     }
     // Demute - Command 0Ch --> INT3(stat)
     fn command_demute(&mut self) -> CommandState {
-        info!("CDROM demute");
+        debug!("CDROM demute");
         self.audio_mute = false;
         self.make_stat_response(INT3, Command::Demute)
     }
@@ -614,7 +614,7 @@ impl CDRom {
     fn command_set_filter(&mut self) -> CommandState {
         self.adpcm.file = self.parameter_fifo.pop_front().unwrap();
         self.adpcm.channel = self.parameter_fifo.pop_front().unwrap();
-        info!("CDROM set filter file {:02X} channel {:02X}",self.adpcm.file,self.adpcm.channel);
+        debug!("CDROM set filter file {:02X} channel {:02X}",self.adpcm.file,self.adpcm.channel);
         self.make_stat_response(INT3, Command::SetFilter)
     }
     // Stop - Command 08h --> INT3(stat) --> INT2(stat)
@@ -625,7 +625,7 @@ impl CDRom {
                 // move to start of track 1
                 let start_time = disc.get_tracks()[0].effective_start_time().clone();
                 disc.seek_sector(start_time);
-                info!("CDROM stop completed. Seeked to track1 start time {:?} ",start_time);
+                debug!("CDROM stop completed. Seeked to track1 start time {:?} ",start_time);
             }
             self.make_stat_response(INT2, Command::Stop)
         } else {
@@ -653,7 +653,7 @@ impl CDRom {
         for b in self.last_sector_header.iter() {
             locl.push(*b);
         }
-        info!("CDROM getlocl: {:?}",locl);
+        debug!("CDROM getlocl: {:?}",locl);
         self.make_response(
             Command::GetLocL,
             INT3,
@@ -678,7 +678,7 @@ impl CDRom {
                 locp[5] = track_relative_time.m();
                 locp[6] = track_relative_time.s();
                 locp[7] = track_relative_time.f();
-                info!("CDROM getlocp absolute={} relative={} index={}",absolute_time,track_relative_time,locp[1]);
+                debug!("CDROM getlocp absolute={} relative={} index={}",absolute_time,track_relative_time,locp[1]);
             }
             for e in locp.iter_mut() {
                 *e = BCD::encode(*e);
@@ -699,7 +699,7 @@ impl CDRom {
             let tracks = disc.get_tracks();
             let first_track_n = tracks[0].track_number();
             let last_track_n = tracks[tracks.len() - 1].track_number();
-            info!("CDROM get_tn first track {} last track {}",first_track_n,last_track_n);
+            debug!("CDROM get_tn first track {} last track {}",first_track_n,last_track_n);
             self.make_response(
                 Command::GetTN,
                 INT3,
@@ -719,7 +719,7 @@ impl CDRom {
             match disc.get_track_by_number(track_n) {
                 Some(track) => {
                     let start_time = track.effective_start_time();
-                    info!("CDROM get_td track {}/{} start time {}",track_n,track.track_number(),start_time);
+                    debug!("CDROM get_td track {}/{} start time {}",track_n,track.track_number(),start_time);
 
                     return self.make_response(
                         Command::GetTD,
@@ -742,7 +742,7 @@ impl CDRom {
     // that error code would normally indicate "wrong number of parameters", but means "motor already on" in this case).
     fn command_motor_on(&mut self,second_response:bool) -> CommandState {
         if second_response {
-            info!("CDROM motor_on completed");
+            debug!("CDROM motor_on completed");
             self.make_stat_response(INT2, Command::MotorOn)
         }
         else {
@@ -770,7 +770,7 @@ impl CDRom {
     }
     // Mute - Command 0Bh --> INT3(stat)
     fn command_mute(&mut self) -> CommandState {
-        info!("CDROM mute on");
+        debug!("CDROM mute on");
         self.audio_mute = true;
         self.make_stat_response(INT3, Command::MotorOn)
     }

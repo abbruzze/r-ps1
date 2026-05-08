@@ -5,9 +5,6 @@ mod commands;
 mod read_sector;
 mod xaadpcm;
 
-use std::collections::VecDeque;
-use std::ops::RangeInclusive;
-use tracing::{debug, info, warn};
 use crate::core::cdrom::commands::INT5;
 use crate::core::cdrom::disc::{AudioLeftRight, Disc, DiscTime, TrackSectorDataSize};
 use crate::core::cdrom::xaadpcm::XaAdpcmState;
@@ -15,6 +12,9 @@ use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::Resettable;
+use std::collections::VecDeque;
+use std::ops::RangeInclusive;
+use tracing::{debug, info, warn};
 /*
 19h,20h --> INT3(yy,mm,dd,ver)
 Indicates the date (Year-month-day, in BCD format) and version of the HC05 CDROM controller BIOS. Known/existing values are:
@@ -342,7 +342,7 @@ impl CDRom {
             }
         }
         if !self.is_irq_pending() && let Some(PendingIrq{ cmd,irq,response}) = self.pending_irq.take() {
-            info!("CDROM applying pending IRQ: {irq} with result {:?} for command {:?}",response,cmd);
+            debug!("CDROM applying pending IRQ: {irq} with result {:?} for command {:?}",response,cmd);
             self.apply_irq_and_result(cmd,irq,response,irq_handler);
         }
         
@@ -591,7 +591,7 @@ impl CDRom {
                 else {
                     CommandState::ToProcess(value)
                 };
-                info!("CDROM pending command: {:02X} while drive state={:?}",value,self.drive_state);
+                debug!("CDROM pending command: {:02X} while drive state={:?}",value,self.drive_state);
             },
             1 => self.write_data(value),
             2 => self.write_ci(value),

@@ -1,9 +1,9 @@
-use std::process::exit;
-use tracing::{debug, info, warn};
-use crate::core::cdrom::{CDRom, Command, DriveState};
 use crate::core::cdrom::commands::{INT1, INT4};
 use crate::core::cdrom::disc::BCD;
+use crate::core::cdrom::{CDRom, Command, DriveState};
 use crate::core::interrupt::IrqHandler;
+use std::process::exit;
+use tracing::{debug, info, warn};
 
 impl CDRom {
     pub(super) fn read_data_sector(&mut self,irq_handler:&mut IrqHandler) -> bool {
@@ -100,7 +100,7 @@ impl CDRom {
             // go to next sector
             let end_of_track = disc.set_next_sector_head_position();
             if end_of_track && (self.mode & 0x02) != 0 { // auto-pause on for end of track
-                info!("End of track with auto-pause set...");
+                debug!("End of track with auto-pause set...");
                 self.change_drive_state(DriveState::Idle);
                 self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
             }
