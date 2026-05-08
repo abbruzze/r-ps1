@@ -1,7 +1,44 @@
-use tracing::debug;
-use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
 use crate::core::gpu::timings::GPUTimings;
+use crate::core::gpu::{Color, Gp0State, Vertex, GPU};
 use crate::core::interrupt::IrqHandler;
+use tracing::debug;
+
+#[derive(Debug, Clone, Copy)]
+struct RectBounds {
+    pub x: i16,
+    pub y: i16,
+    pub width: u16,
+    pub height: u16,
+}
+
+impl RectBounds {
+    fn new(x: i16, y: i16, width: u16, height: u16) -> RectBounds {
+        RectBounds { x, y, width, height }
+    }
+
+    fn intersection(a: RectBounds, b: RectBounds) -> Option<RectBounds> {
+        let ax2 = a.x + a.width as i16;
+        let ay2 = a.y + a.height as i16;
+        let bx2 = b.x + b.width as i16;
+        let by2 = b.y + b.height as i16;
+
+        let x1 = a.x.max(b.x);
+        let y1 = a.y.max(b.y);
+        let x2 = ax2.min(bx2);
+        let y2 = ay2.min(by2);
+
+        if x2 > x1 && y2 > y1 {
+            Some(RectBounds {
+                x: x1,
+                y: y1,
+                width: (x2 - x1) as u16,
+                height: (y2 - y1) as u16,
+            })
+        } else {
+            None
+        }
+    }
+}
 
 impl GPU {
     /*
@@ -63,7 +100,7 @@ impl GPU {
                 let shading_color = Color::from_u32(cmd);
                 let mut vertex = Vertex::from_command_parameter(self.cmd_fifo.pop().unwrap());
                 let uv = if is_textured { Some(self.cmd_fifo.pop().unwrap()) } else { None };
-                let (width,height) = match size {
+                let (mut width,mut height) = match size {
                     0b00 => {
                         let size = self.cmd_fifo.pop().unwrap();
                         ((size & 0x3FF) as u16,(size >> 16) as u16)
@@ -74,57 +111,63 @@ impl GPU {
                     _ => unreachable!()
                 };
                 debug!("GP0 Rectangle rendering (x,y)={:?} size={:02b} color={:?} textured_uv={:?} width={} height={} semi_transparent={} raw_texture={} x_offset={} y_offset={} texture={:?}",vertex,size,shading_color,uv,width,height,semi_transparent,is_raw_texture,self.drawing_area.x_offset,self.drawing_area.y_offset,self.texture);
+
+                if width > 1023 || height > 511 {
+                    self.gp0state = Gp0State::WaitingCommand;
+                    return GPUTimings::rectangle(0, is_textured, semi_transparent);
+                }
+
                 vertex.add_offset(self.drawing_area.x_offset,self.drawing_area.y_offset);
-                let origin = vertex.clone();
+
                 let color = shading_color.to_u16();
                 let mut pixels = 0;
+
+                let rec = RectBounds::new(vertex.x,vertex.y,width,height);
+                let window_rec = RectBounds::new(self.drawing_area.area_left as i16,
+                                                 self.drawing_area.area_top as i16,
+                                                 (self.drawing_area.area_right + 1).saturating_sub(self.drawing_area.area_left),
+                                                 (self.drawing_area.area_bottom + 1).saturating_sub(self.drawing_area.area_top));
+                let rect_bounds = RectBounds::intersection(rec,window_rec);
+                if let Some(intersection) = rect_bounds.as_ref() {
+                    width = intersection.width;
+                    height = intersection.height;
+                    vertex.x = intersection.x;
+                    vertex.y = intersection.y;
+                }
+                else {
+                    self.gp0state = Gp0State::WaitingCommand;
+                    return GPUTimings::rectangle(0, is_textured, semi_transparent);
+                }
+
+                let origin_x = vertex.x;
+
                 match uv {
                     Some(uv) => { // textured
                         let base_u = uv as u8;
                         let base_v = (uv >> 8) as u8;
-                        // if self.texture.rectangle_x_flip {
-                        //     base_u = base_u.wrapping_add(width as u8);
-                        // }
-                        // if self.texture.rectangle_y_flip {
-                        //     base_v = base_v.wrapping_add(height as u8);
-                        // }
                         let clut = uv >> 16;
                         let clut_x = clut & 0x3F; // 0-5    X coordinate X/16
                         let clut_y = (clut >> 6) & 0x1FF; // 6-14   Y coordinate 0-511
                         for y in 0..height {
                             let v = base_v.wrapping_add(y as u8);
-                            // let v = if self.texture.rectangle_y_flip {
-                            //     base_v.wrapping_sub(y as u8)
-                            // }
-                            // else {
-                            //     base_v.wrapping_add(y as u8)
-                            // };
                             for x in 0..width {
-                                if vertex.is_inside_drawing_area(&self.drawing_area) {
-                                    let u = base_u.wrapping_add(x as u8);
-                                    // let u = if self.texture.rectangle_x_flip {
-                                    //     base_u.wrapping_sub(x as u8)
-                                    // }
-                                    // else {
-                                    //     base_u.wrapping_add(x as u8)
-                                    // };
-                                    let texture_pixel = self.get_texture_pixel(clut_x, clut_y, u.into(), v.into(),self.texture.page_base_x,self.texture.page_base_y,self.texture.depth);
+                                let u = base_u.wrapping_add(x as u8);
+                                let texture_pixel = self.get_texture_pixel(clut_x, clut_y, u.into(), v.into(),self.texture.page_base_x,self.texture.page_base_y,self.texture.depth);
 
-                                    if texture_pixel != 0x0000 {
-                                        let texture_mask_bit = texture_pixel & 0x8000 != 0;
-                                        let raw_color = Color::from_u16(texture_pixel);
-                                        let color = if is_raw_texture {
-                                            raw_color
-                                        } else {
-                                            raw_color.modulate_with(&shading_color)
-                                        };
-                                        pixels += 1;
-                                        self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent && texture_mask_bit,Some(self.semi_transparency));
-                                    }
+                                if texture_pixel != 0x0000 {
+                                    let texture_mask_bit = texture_pixel & 0x8000 != 0;
+                                    let raw_color = Color::from_u16(texture_pixel);
+                                    let color = if is_raw_texture {
+                                        raw_color
+                                    } else {
+                                        raw_color.modulate_with(&shading_color)
+                                    };
+                                    pixels += 1;
+                                    self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color.to_u16(), true, semi_transparent && texture_mask_bit,Some(self.semi_transparency));
                                 }
                                 vertex.x += 1;
                             }
-                            vertex.x = origin.x;
+                            vertex.x = origin_x;
                             vertex.y += 1;
                         }
                     }
@@ -132,12 +175,10 @@ impl GPU {
                         for _ in 0..height {
                             for _ in 0..width {
                                 pixels += 1;
-                                if vertex.is_inside_drawing_area(&self.drawing_area) {
-                                    self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent,Some(self.semi_transparency));
-                                }
+                                self.draw_pixel_offset(self.get_vram_offset_15(vertex.x as u16, vertex.y as u16), color, true, semi_transparent,Some(self.semi_transparency));
                                 vertex.x += 1;
                             }
-                            vertex.x = origin.x;
+                            vertex.x = origin_x;
                             vertex.y += 1;
                         }
                     }
