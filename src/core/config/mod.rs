@@ -88,7 +88,7 @@ pub fn parse_keycode(s: &str) -> Option<KeyCode> {
 
 pub fn keycode_to_string(keycode: KeyCode) -> String {
     match keycode {
-        // Lettere
+        // Letters
         KeyCode::KeyA => "KeyA".to_string(),
         KeyCode::KeyB => "KeyB".to_string(),
         KeyCode::KeyC => "KeyC".to_string(),
@@ -116,7 +116,7 @@ pub fn keycode_to_string(keycode: KeyCode) -> String {
         KeyCode::KeyY => "KeyY".to_string(),
         KeyCode::KeyZ => "KeyZ".to_string(),
 
-        // Numeri
+        // Numbers
         KeyCode::Digit0 => "Digit0".to_string(),
         KeyCode::Digit1 => "Digit1".to_string(),
         KeyCode::Digit2 => "Digit2".to_string(),
@@ -128,20 +128,20 @@ pub fn keycode_to_string(keycode: KeyCode) -> String {
         KeyCode::Digit8 => "Digit8".to_string(),
         KeyCode::Digit9 => "Digit9".to_string(),
 
-        // Frecce
+        // Arrows
         KeyCode::ArrowUp => "ArrowUp".to_string(),
         KeyCode::ArrowDown => "ArrowDown".to_string(),
         KeyCode::ArrowLeft => "ArrowLeft".to_string(),
         KeyCode::ArrowRight => "ArrowRight".to_string(),
 
-        // Speciali
+        // Specials
         KeyCode::Enter => "Enter".to_string(),
         KeyCode::Space => "Space".to_string(),
         KeyCode::Escape => "Escape".to_string(),
         KeyCode::Tab => "Tab".to_string(),
         KeyCode::Backspace => "Backspace".to_string(),
 
-        // Modificatori
+        // Modificators
         KeyCode::ShiftLeft => "ShiftLeft".to_string(),
         KeyCode::ShiftRight => "ShiftRight".to_string(),
         KeyCode::ControlLeft => "ControlLeft".to_string(),
@@ -221,7 +221,7 @@ impl KeyMapping {
             cross: "KeyK".to_string(),
             circle: "KeyJ".to_string(),
             square: "KeyL".to_string(),
-            triangle: "KeyH".to_string(),
+            triangle: "KeyM".to_string(),
 
             // Shoulder buttons
             l1: "KeyU".to_string(),

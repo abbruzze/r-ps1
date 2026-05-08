@@ -1,11 +1,11 @@
+use crate::core::config::Config;
 use crate::core::cpu::cop2::Cop2;
 use crate::core::cpu::instruction::{Instruction, Opcode};
-use crate::core::{memory, Resettable};
+use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, MemoryMap, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
+use crate::core::{memory, Resettable};
 use std::mem;
 use tracing::{debug, error, info};
-use crate::core::config::Config;
-use crate::core::memory::bus::Bus;
 
 pub mod instruction;
 pub mod disassembler;
@@ -269,7 +269,6 @@ impl WriteQueue {
             return false;
         }
 
-        // Unrolled loop - controlla fino a 4 elementi
         let check_entry = |idx: usize| -> bool {
             let (address, _, byte_size) = self.queue[idx];
             address_to_find >= address && address_to_find < address + byte_size as u32

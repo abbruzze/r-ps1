@@ -373,7 +373,7 @@ impl PixelsRenderer {
             }
         }
         else {
-            renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
+            renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
         }
 
         renderer

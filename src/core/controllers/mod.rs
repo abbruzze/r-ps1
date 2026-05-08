@@ -125,7 +125,7 @@ impl Resettable for Controller {
         self.digital_switches = 0xFFFF;
         self.analog_switches = 0;
         self.last_cmd = 0;
-        self.write_cheksum = 0;
+        self.write_checksum = 0;
     }
 }
 
@@ -142,7 +142,7 @@ pub struct Controller {
     memory_card_selected: bool,
     memory_card_sector: u16,
     last_cmd: u8,
-    write_cheksum: u8,
+    write_checksum: u8,
 
 }
 
@@ -160,7 +160,7 @@ impl Controller {
             memory_card_selected: false,
             memory_card_sector: 0,
             last_cmd: 0,
-            write_cheksum: 0,
+            write_checksum: 0,
 
         }
     }
@@ -397,7 +397,7 @@ impl Controller {
                     self.memory_card.get_checksum()
                 }
                 else {
-                    self.write_cheksum = cmd;
+                    self.write_checksum = cmd;
                     self.state = ControllerState::MemAck1;
                     self.last_cmd
                 }
@@ -416,7 +416,7 @@ impl Controller {
             ControllerState::MemEndByteWrite => {
                 self.state = ControllerState::Init;
                 self.memory_card_selected = false;
-                if self.write_cheksum == self.memory_card.get_checksum() {
+                if self.write_checksum == self.memory_card.get_checksum() {
                     0x47
                 }
                 else {
