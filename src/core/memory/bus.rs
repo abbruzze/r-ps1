@@ -1057,6 +1057,15 @@ impl Memory for Bus {
             },
             // Expansion 2 ===============================================================================
             MemorySection::ExpansionRegion2 => {
+                /*
+                1F802041h - POST - External 7-segment Display (W)
+                  0-3  Current Boot Status (00h..0Fh)
+                  4-7  Not used by BIOS    (always set to 0)
+                During boot, the BIOS writes incrementing values to this register, allowing to display the current boot status on an external 7 segment display (much the same as Port 80h used in PC BIOSes).
+                 */
+                if address == 0x1F802041 {
+                    info!("BIOS at stage {}",value & 0xF);
+                }
                 debug!("Writing Expansion 2 {:08X} = {:08X}",address,value);
                 // TODO
                 let penalty = match SIZE {
