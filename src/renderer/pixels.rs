@@ -1,4 +1,4 @@
-use super::{text_renderer, CDOperation, GUIEvent, MouseAccumulator};
+use super::{CDOperation, GUIEvent, MouseAccumulator};
 use super::{EmuStarter, GPUFrameBuffer, PS1Event, Renderer};
 use crate::core::cdrom::Region;
 use crate::core::config::{Config, ControllerType};
