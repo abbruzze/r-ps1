@@ -1,9 +1,13 @@
-use std::cmp;
-use tracing::debug;
-use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
+//! Structure representing texture attributes for polygons.
+//!
+//! This struct holds information regarding texture mapping, such as CLUT (Color Lookup Table) coordinates,
+//! page coordinates for textures, semi-transparency mode, and texture depth.
 use crate::core::gpu::gp0::DITHER_TABLE;
 use crate::core::gpu::timings::GPUTimings;
+use crate::core::gpu::{Color, Gp0State, SemiTransparency, TextureDepth, Vertex, GPU};
 use crate::core::interrupt::IrqHandler;
+use std::cmp;
+use tracing::debug;
 
 #[derive(Debug,Clone,Default)]
 struct PolygonTexture {
@@ -204,6 +208,45 @@ impl GPU {
         (dy < 0) || (dy == 0 && dx > 0)
     }
 
+    /*
+        Optimized with AI using fixed point arithmetic.
+
+        This function rasterizes one triangle of a polygon. For quads, it is called twice with a
+        different OFFSET so that the polygon is split into two triangles.
+
+        The implementation first selects the three vertices, computes the signed triangle area with
+        edge_function, and normalizes the winding order so that the area is positive. Degenerate
+        triangles with zero area are discarded immediately.
+
+        Rasterization is performed with edge functions. Each edge is classified with the top-left
+        rule and receives a small bias, so pixels lying exactly on shared edges are handled
+        consistently and adjacent triangles do not draw the same pixel twice.
+
+        A clipped bounding box is computed in VRAM coordinates, limiting the scan area to the
+        1024x512 framebuffer. The function then scans the bounding box row by row. For each row,
+        the edge values are initialized at the left side of the box and then incrementally updated
+        while moving along the X axis, avoiding repeated full edge-function evaluations per pixel.
+
+        For Gouraud shaded or textured triangles, barycentric weights are computed from the edge
+        values. The reciprocal of the triangle area is stored in fixed point form, allowing color
+        components and texture coordinates to be interpolated with integer arithmetic instead of
+        floating point operations. Per-pixel X steps for RGB and UV values are precomputed once and
+        then accumulated inside the inner loop.
+
+        If texturing is enabled, interpolated UV coordinates are adjusted through the current texture
+        window settings, then used to fetch a texel from VRAM according to the texture depth
+        (4-bit CLUT, 8-bit CLUT, or 15-bit direct color). A zero texel is treated as transparent.
+        Non-transparent texels either replace the current color in raw texture mode or are modulated
+        with the shaded color.
+
+        Dithering is applied only when enabled by GPU state and when required by Gouraud shading or
+        texture modulation. Semi-transparency is applied according to the polygon flag and, for
+        textured polygons, only when the texture pixel allows it through bit 15.
+
+        Each visible pixel is finally clipped against the drawing area, converted to RGB555, and
+        written to VRAM through draw_pixel_offset so mask-bit and semi-transparency rules are honored.
+        The function returns the number of pixels actually drawn, which is later used for GPU timing.
+         */
     fn draw_triangle<const OFFSET: usize>(&mut self, polygon: &Polygon, is_gouraud: bool, is_textured: bool, is_semi_transparent: bool, is_raw_texture: bool) -> usize {
         let v0 = &polygon.vertex[0 + OFFSET];
         let v1 = &polygon.vertex[1 + OFFSET];
@@ -254,6 +297,37 @@ impl GPU {
             (0, 0, TextureDepth::T4Bit, 0, 0, SemiTransparency::Average)
         };
 
+        // Pre-calculate texture window values
+        let tex_window_mask_x = (self.texture.window_x_mask as u32) << 3;
+        let tex_window_mask_y = (self.texture.window_y_mask as u32) << 3;
+        let tex_window_offset_x = ((self.texture.window_x_offset & self.texture.window_x_mask) as u32) << 3;
+        let tex_window_offset_y = ((self.texture.window_y_offset & self.texture.window_y_mask) as u32) << 3;
+
+        // Fixed point 16.16
+        let inv_abc_fp = ((1u64 << 32) / abc as u64) as i64;
+
+        let mut r_step_x = 0i64;
+        let mut g_step_x = 0i64;
+        let mut b_step_x = 0i64;
+        let mut u_step_x = 0i64;
+        let mut v_step_x = 0i64;
+
+        if is_gouraud || is_textured {
+            let dx_bc = b.y - c.y;
+            let dx_ca = c.y - a.y;
+
+            if is_gouraud {
+                r_step_x = ((ac.r as i32 * dx_bc as i32 + bc.r as i32 * dx_ca as i32 + cc.r as i32 * (-(dx_bc + dx_ca) as i32)) as i64 * inv_abc_fp) >> 16;
+                g_step_x = ((ac.g as i32 * dx_bc as i32 + bc.g as i32 * dx_ca as i32 + cc.g as i32 * (-(dx_bc + dx_ca) as i32)) as i64 * inv_abc_fp) >> 16;
+                b_step_x = ((ac.b as i32 * dx_bc as i32 + bc.b as i32 * dx_ca as i32 + cc.b as i32 * (-(dx_bc + dx_ca) as i32)) as i64 * inv_abc_fp) >> 16;
+            }
+
+            if is_textured {
+                u_step_x = (( (a_uv.u * 256 + 128) * dx_bc as i32 + (b_uv.u * 256 + 128) * dx_ca as i32 + (c_uv.u * 256 + 128) * (-(dx_bc + dx_ca) as i32)) as i64 * inv_abc_fp) >> 24;
+                v_step_x = (( (a_uv.v * 256 + 128) * dx_bc as i32 + (b_uv.v * 256 + 128) * dx_ca as i32 + (c_uv.v * 256 + 128) * (-(dx_bc + dx_ca) as i32)) as i64 * inv_abc_fp) >> 24;
+            }
+        }
+
         for y in min_y..max_y {
             let p_y = Vertex { x: min_x, y };
             let mut abp = Self::edge_function(a, b, &p_y);
@@ -267,64 +341,114 @@ impl GPU {
             let vram_y_offset = self.get_vram_offset_15(0, y as u16);
             let is_inside_y = y >= self.drawing_area.area_top as i16 && y <= self.drawing_area.area_bottom as i16;
 
-            for x in min_x..max_x {
-                let inside = (abp + bias_ab >= 0) && (bcp + bias_bc >= 0) && (cap + bias_ca >= 0);
+            if is_inside_y {
+                let w_a = (bcp as i64 * inv_abc_fp) >> 16;
+                let w_b = (cap as i64 * inv_abc_fp) >> 16;
+                let w_c = 65536i64 - w_a - w_b;
 
-                if inside && is_inside_y && x >= self.drawing_area.area_left as i16 && x <= self.drawing_area.area_right as i16 {
-                    let weight_a = bcp as f32 / abc as f32;
-                    let weight_b = cap as f32 / abc as f32;
-                    let weight_c = 1.0 - weight_a - weight_b;
+                let mut curr_r = ac.r as i64 * w_a + bc.r as i64 * w_b + cc.r as i64 * w_c;
+                let mut curr_g = ac.g as i64 * w_a + bc.g as i64 * w_b + cc.g as i64 * w_c;
+                let mut curr_b = ac.b as i64 * w_a + bc.b as i64 * w_b + cc.b as i64 * w_c;
+                let mut curr_u = ((a_uv.u * 256 + 128) as i64 * w_a + (b_uv.u * 256 + 128) as i64 * w_b + (c_uv.u * 256 + 128) as i64 * w_c) >> 8;
+                let mut curr_v = ((a_uv.v * 256 + 128) as i64 * w_a + (b_uv.v * 256 + 128) as i64 * w_b + (c_uv.v * 256 + 128) as i64 * w_c) >> 8;
 
-                    let mut color = if is_gouraud {
-                        let r = ac.r as f32 * weight_a + bc.r as f32 * weight_b + cc.r as f32 * weight_c;
-                        let g = ac.g as f32 * weight_a + bc.g as f32 * weight_b + cc.g as f32 * weight_c;
-                        let b = ac.b as f32 * weight_a + bc.b as f32 * weight_b + cc.b as f32 * weight_c;
-                        Color::new(r.round() as u8,g.round() as u8,b.round() as u8,false)
-                    }
-                    else {
-                        *ac
-                    };
+                let area_left = self.drawing_area.area_left as i16;
+                let area_right = self.drawing_area.area_right as i16;
 
-                    let mut semi_transparency_mode = self.semi_transparency;
-                    let mut transparent_pixel = false;
-                    let mut texture_semi_transparency_allowed = false;
+                // Determine if we need to dither (gouraud shading or modulation)
+                let dither_enabled = (is_gouraud || (is_textured && !is_raw_texture)) && self.dithering;
 
-                    if is_textured {
-                        semi_transparency_mode = texture_semi_transparency;
-                        let u = ((a_uv.u as f32) + 0.5) * weight_a + ((b_uv.u as f32) + 0.5) * weight_b + ((c_uv.u as f32) + 0.5) * weight_c;
-                        let v = ((a_uv.v as f32) + 0.5) * weight_a + ((b_uv.v as f32) + 0.5) * weight_b + ((c_uv.v as f32) + 0.5) * weight_c;
+                for x in min_x..max_x {
+                    let inside = (abp + bias_ab >= 0) && (bcp + bias_bc >= 0) && (cap + bias_ca >= 0);
 
-                        let texture_pixel = self.get_texture_pixel(clut_x, clut_y, u as u32, v as u32, texture_page_x, texture_page_y, texture_depth);
-                        transparent_pixel = texture_pixel == 0x0000;
-                        if !transparent_pixel {
-                            texture_semi_transparency_allowed = (texture_pixel & 0x8000) != 0;
-                            let raw_color = Color::from_u16(texture_pixel);
-                            if is_raw_texture {
-                                color = raw_color;
-                            } else {
-                                color = raw_color.modulate_with(&color);
-                            }
-                        }
-                    }
-
-                    if !transparent_pixel {
-                        pixels += 1;
-                        let is_semi_transparent_pixel = is_semi_transparent && (!is_textured || texture_semi_transparency_allowed);
-
-                        let final_color = if (is_gouraud || (is_textured && !is_raw_texture)) && self.dithering {
-                            let dither_value = DITHER_TABLE[(y & 3) as usize][(x & 3) as usize];
-                            color.dither(dither_value)
+                    if inside && x >= area_left && x <= area_right {
+                        let mut color = if is_gouraud {
+                            Color::new((curr_r >> 16) as u8, (curr_g >> 16) as u8, (curr_b >> 16) as u8, false)
                         } else {
-                            color
+                            *ac
                         };
 
-                        let offset = vram_y_offset + ((x as usize & 0x3FF) << 1);
-                        self.draw_pixel_offset(offset, final_color.to_u16(), true, is_semi_transparent_pixel, Some(semi_transparency_mode));
+                        let mut semi_transparency_mode = self.semi_transparency;
+                        let mut transparent_pixel = false;
+                        let mut texture_semi_transparency_allowed = false;
+
+                        if is_textured {
+                            semi_transparency_mode = texture_semi_transparency;
+
+                            let u = ((curr_u >> 16) as u32 & !tex_window_mask_x) | tex_window_offset_x;
+                            let v = ((curr_v >> 16) as u32 & !tex_window_mask_y) | tex_window_offset_y;
+
+                            let y_tex = ((texture_page_y as u32) << 8) + v;
+                            let texture_pixel = match texture_depth {
+                                TextureDepth::T4Bit => {
+                                    let vram_x_pixels = (((texture_page_x as u32) << 6) + (u >> 2)) & 0x3FF;
+                                    let byte_offset = (((y_tex << 10) + vram_x_pixels) as usize) << 1;
+                                    let value = self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8);
+                                    let clut_index = ((value >> ((u & 3) << 2)) & 0xF) as usize;
+                                    let clut_addr = ((((clut_y << 10) + (clut_x << 4)) as usize) << 1) + (clut_index << 1);
+                                    self.vram[clut_addr] as u16 | ((self.vram[clut_addr + 1] as u16) << 8)
+                                }
+                                TextureDepth::T8Bit => {
+                                    let vram_x_pixels = (((texture_page_x as u32) << 6) + (u >> 1)) & 0x3FF;
+                                    let byte_offset = (((y_tex << 10) + vram_x_pixels) as usize) << 1;
+                                    let value = self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8);
+                                    let clut_index = ((value >> ((u & 1) << 3)) & 0xFF) as usize;
+                                    let clut_addr = ((((clut_y << 10) + (clut_x << 4)) as usize) << 1) + (clut_index << 1);
+                                    self.vram[clut_addr] as u16 | ((self.vram[clut_addr + 1] as u16) << 8)
+                                }
+                                _ => {
+                                    let vram_x_pixels = (((texture_page_x as u32) << 6) + u) & 0x3FF;
+                                    let byte_offset = (((y_tex << 10) + vram_x_pixels) as usize) << 1;
+                                    self.vram[byte_offset] as u16 | ((self.vram[byte_offset + 1] as u16) << 8)
+                                }
+                            };
+
+                            transparent_pixel = texture_pixel == 0x0000;
+                            if !transparent_pixel {
+                                texture_semi_transparency_allowed = (texture_pixel & 0x8000) != 0;
+                                let raw_color = Color::from_u16(texture_pixel);
+                                if is_raw_texture {
+                                    color = raw_color;
+                                } else {
+                                    color = raw_color.modulate_with(&color);
+                                }
+                            }
+                        }
+
+                        if !transparent_pixel {
+                            pixels += 1;
+                            let is_semi_transparent_pixel = is_semi_transparent && (!is_textured || texture_semi_transparency_allowed);
+
+                            let final_color = if dither_enabled {
+                                let dither_value = DITHER_TABLE[(y & 3) as usize][(x & 3) as usize];
+                                color.dither(dither_value)
+                            } else {
+                                color
+                            };
+
+                            let offset = vram_y_offset + ((x as usize & 0x3FF) << 1);
+                            self.draw_pixel_offset(offset, final_color.to_u16(), true, is_semi_transparent_pixel, Some(semi_transparency_mode));
+                        }
+                    }
+                    abp += dx_ab as i32;
+                    bcp += dx_bc as i32;
+                    cap += dx_ca as i32;
+                    if is_gouraud {
+                        curr_r += r_step_x;
+                        curr_g += g_step_x;
+                        curr_b += b_step_x;
+                    }
+                    if is_textured {
+                        curr_u += u_step_x;
+                        curr_v += v_step_x;
                     }
                 }
-                abp += dx_ab as i32;
-                bcp += dx_bc as i32;
-                cap += dx_ca as i32;
+            } else {
+                for _ in min_x..max_x {
+                    abp += dx_ab as i32;
+                    bcp += dx_bc as i32;
+                    cap += dx_ca as i32;
+                }
             }
         }
         pixels
