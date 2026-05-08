@@ -1,7 +1,7 @@
-use std::cmp;
-use tracing::{debug, error, info};
 use crate::core::cpu::{CopResult, Coprocessor};
 use crate::core::Resettable;
+use std::cmp;
+use tracing::{debug, error, info};
 
 pub static COP2_CONTROL_REGISTER_ALIASES: [ &str; 32 ] = [
     "$cop2_r11r12", "$cop2_r13r21", "$cop2_r22r23", "$cop2_r31r32", "$cop2_r33", "$cop2_trx", "$cop2_try", "$cop2_trz",
@@ -1849,8 +1849,16 @@ impl Cop2 {
         self.rgb_fifo[2].c = c;
     }
 
+    #[inline(always)]
     fn leading_count(lzcs: i32) -> u32 {
         let leading_bit = (lzcs as u32) >> 31;
+        if leading_bit == 0 {
+            lzcs.leading_zeros()
+        }
+        else {
+            lzcs.leading_ones()
+        }
+        /*
         let mut leading_count = 1;
 
         for i in 1..32 {
@@ -1862,5 +1870,6 @@ impl Cop2 {
         }
 
         leading_count
+         */
     }
 }
