@@ -373,8 +373,10 @@ impl PixelsRenderer {
             }
         }
         else {
-            renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Nearest);
+            renderer.image_resizer_options = renderer.image_resizer_options.resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
         }
+
+        info!("Rendering options set to {:?}",renderer.image_resizer_options.algorithm);
 
         renderer
     }
@@ -521,7 +523,7 @@ impl PixelsRenderer {
                 Self::get_adjusted_image_size_4_3(window_size)
             };
             let mut image_dst = Image::new(adjusted_width, adjusted_height, PixelType::U8x4);
-            self.image_resizer.resize(&image_src,&mut image_dst,&ResizeOptions::new().resize_alg(ResizeAlg::Nearest)).unwrap();
+            self.image_resizer.resize(&image_src,&mut image_dst,&self.image_resizer_options).unwrap();
             let resized_buffer = image_dst.buffer();
 
             let frame_buffer = pixels.frame_mut();
