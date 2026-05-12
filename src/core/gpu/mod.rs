@@ -653,7 +653,7 @@ impl Vertex {
         self.x += x_offset;
         self.y += y_offset;
     }
-    #[inline]
+    #[inline(always)]
     fn is_inside_drawing_area(&self,drawing_area: &DrawingArea) -> bool {
         drawing_area.is_inside(self.x,self.y)
     }
