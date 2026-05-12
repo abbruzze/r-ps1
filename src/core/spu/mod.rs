@@ -1,19 +1,19 @@
 // Thanks to https://github.com/jsgroth/CoffeePSX
 
-use std::array;
-use std::cell::Cell;
-use std::ops::{Index, IndexMut, Range};
-use tracing::{debug, error, info, warn};
 use crate::core::cdrom::CDRom;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
-use crate::core::Resettable;
 use crate::core::spu::envelope::VolumeControl;
 use crate::core::spu::noise::NoiseGenerator;
 use crate::core::spu::reverb::ReverbUnit;
 use crate::core::spu::util::{I32Ext, U32Ext};
 use crate::core::spu::voice::Voice;
+use crate::core::Resettable;
+use std::array;
+use std::cell::Cell;
+use std::ops::{Index, IndexMut, Range};
+use tracing::{debug, error, info, warn};
 
 mod interpolate;
 mod util;
@@ -483,11 +483,11 @@ impl Spu {
             0x1DB0 => (self.volume.cd_l as u16).into(),
             0x1DB2 => (self.volume.cd_r as u16).into(),
             0x1DB4 => {
-                warn!("External audio volume L read");
+                debug!("External audio volume L read");
                 0
             }
             0x1DB6 => {
-                warn!("External audio volume R read");
+                debug!("External audio volume R read");
                 0
             }
             0x1DB8 => (self.volume.main_l.volume as u16).into(),
@@ -571,10 +571,10 @@ impl Spu {
             0x1D98 => self.reverb.write_reverb_on_low(value),
             0x1D9A => self.reverb.write_reverb_on_high(value),
             0x1D9C => {
-                warn!("ENDX write (voices 0-15): {value:04X}");
+                debug!("ENDX write (voices 0-15): {value:04X}");
             }
             0x1D9E => {
-                warn!("ENDX write (voices 16-23): {value:04X}");
+                debug!("ENDX write (voices 16-23): {value:04X}");
             }
             0x1DA0 => {
                 // Read-only register with unknown functionality
@@ -611,7 +611,7 @@ impl Spu {
             0x1DB4 => debug!("Unimplemented external audio volume L write: {value:04X}"),
             0x1DB6 => debug!("Unimplemented external audio volume R write: {value:04X}"),
             0x1DB8..=0x1DBF => {
-                warn!(
+                debug!(
                     "Unimplemented write to internal volume register: {address:08X} {value:04X}"
                 );
             }

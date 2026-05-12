@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
 use crate::audio::{AudioDevice, AudioSample};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
@@ -10,6 +10,7 @@ pub struct CpalAudioDevice {
     buffer: Vec<AudioSample>,
     buffer_size: usize,
     audio_queue: Arc<Mutex<VecDeque<AudioSample>>>,
+    started: bool,
 }
 
 impl CpalAudioDevice {
@@ -21,6 +22,7 @@ impl CpalAudioDevice {
             buffer: Vec::with_capacity(buffer_capacity),
             buffer_size: buffer_capacity,
             audio_queue: Arc::new(Mutex::new(VecDeque::new())),
+            started: false,
         };
 
         dev
@@ -63,13 +65,21 @@ impl CpalAudioDevice {
                                         error!("Audio stream error: {:?}", err);
                                     },
                                     None // None=blocking, Some(Duration)=timeout
-                                ).unwrap();
+                                );
 
-                                stream.play().unwrap();
-                                info!("Audio device started");
-                                self.stream = Some(stream);
+                                match stream {
+                                    Ok(stream) => {
+                                        stream.play().unwrap();
+                                        info!("Audio device started");
+                                        self.stream = Some(stream);
+                                        self.started = true;
 
-                                Ok(())
+                                        Ok(())
+                                    }
+                                    Err(e) => {
+                                        Err(format!("Error starting audio stream: {}", e))
+                                    }
+                                }
                             }
                             None => {
                                 Err("No suitable audio output config found for 44100Hz and i16 sample format".to_string())
@@ -90,13 +100,15 @@ impl CpalAudioDevice {
 
 impl AudioDevice for CpalAudioDevice {
     fn play_sample(&mut self, sample: AudioSample) {
-        self.buffer.push(sample);
-        if self.buffer.len() >= self.buffer_size {
-            if let Ok(mut queue) = self.audio_queue.lock() {
-                for sample in self.buffer.iter() {
-                    queue.push_back(*sample);
+        if self.started {
+            self.buffer.push(sample);
+            if self.buffer.len() >= self.buffer_size {
+                if let Ok(mut queue) = self.audio_queue.lock() {
+                    for sample in self.buffer.iter() {
+                        queue.push_back(*sample);
+                    }
+                    self.buffer.clear();
                 }
-                self.buffer.clear();
             }
         }
     }
