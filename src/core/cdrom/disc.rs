@@ -1,3 +1,5 @@
+use crate::core::cdrom::{cue, util, Region};
+use crate::core::Resettable;
 use std::cmp::Ordering;
 use std::fmt;
 use std::fs::File;
@@ -6,8 +8,6 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
 use zip::ZipArchive;
-use crate::core::cdrom::{cue, util, Region};
-use crate::core::Resettable;
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
 
@@ -265,7 +265,9 @@ impl Track {
         }
 
         let offset : u64 = relative_msf.sub(&self.pre_gap).to_lba() as u64 * SECTOR_SIZE as u64;
-        file.seek(SeekFrom::Start(offset))?;
+        if let Err(_) = file.seek(SeekFrom::Start(offset)) {
+            return Ok(false);
+        }
         file.read_exact(buffer)?;
 
         Ok(true)
@@ -282,6 +284,14 @@ impl Track {
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub(super) enum SectorReadResult {
+    SectorReadOk(DataSector),
+    SectorReadError(std::io::Error),
+    EndOfTrack,
+    TrackNotFound,
 }
 
 #[derive(Debug)]
@@ -521,7 +531,7 @@ impl Disc {
         }
     }
 
-    pub fn read_sector(&mut self) -> Option<DataSector> {
+    pub fn read_sector(&mut self) -> SectorReadResult {
         let msf = self.head_position;
         let mut track_number : Option<u8> = None;
         let resp = match self.find_track(msf) {
@@ -530,20 +540,17 @@ impl Disc {
                 debug!("Reading sector {} from track {} in '{}'",msf,track.track_number(),file_path.display());
                 let mut sector = DataSector::empty(track.track_number());
                 match track.read_sector_into(file, msf, &mut sector.sector) {
-                    Ok(true) => Some(sector),
-                    Ok(false) => {
-                        warn!("Cannot read sector {} from track {} in '{}': sector out of range",msf,track.track_number(),file_path.display());
-                        None
-                    },
+                    Ok(true) => SectorReadResult::SectorReadOk(sector),
+                    Ok(false) => SectorReadResult::EndOfTrack,
                     Err(e) => {
-                        info!("Failed to read sector {} from track {} in '{}': {}",msf,track.track_number(),file_path.display(),e);
-                        None
+                        error!("Failed to read sector {} from track {} in '{}': {}",msf,track.track_number(),file_path.display(),e);
+                        SectorReadResult::SectorReadError(e)
                     }
                 }
             },
             None => {
                 error!("Cannot read sector {}: track not found",msf);
-                None
+                SectorReadResult::TrackNotFound
             }
         };
 

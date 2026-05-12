@@ -1,17 +1,19 @@
 use crate::core::cdrom::commands::{INT1, INT4};
-use crate::core::cdrom::disc::BCD;
+use crate::core::cdrom::disc::{Disc, SectorReadResult, BCD};
 use crate::core::cdrom::{CDRom, Command, DriveState};
 use crate::core::interrupt::IrqHandler;
 use std::process::exit;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 impl CDRom {
     pub(super) fn read_data_sector(&mut self,irq_handler:&mut IrqHandler) -> bool {
         let sector_size = self.get_sector_size();
         let mut send_int1 = false;
+        let mut end_of_track = false;
         if let Some(disc) = self.disc.as_mut() {
-            match disc.read_sector() {
-                Some(sector) => {
+            let read_result = disc.read_sector();
+            match read_result {
+                SectorReadResult::SectorReadOk(sector) => {
                     // 4-byte sector header, plus 4-byte subheader of the current sector
                     self.last_sector_header.clear();
                     self.last_sector_header.extend(&sector.sector[12..20]);
@@ -38,37 +40,60 @@ impl CDRom {
                         self.data_buffer.extend(data);
                     }
                 }
-                None => {
-                    warn!("CDROM read_data_sector at loc {:?} failed",disc.get_head_position());
+                SectorReadResult::EndOfTrack => { // end of track
+                    end_of_track = true;
+                }
+                SectorReadResult::SectorReadError(e) => {
+                    error!("CDROM read_data_sector at loc {:?} failed due to {:?}",disc.get_head_position(),e);
+                }
+                SectorReadResult::TrackNotFound => {
+                    error!("CDROM read_data_sector at loc {:?} failed: track not found",disc.get_head_position());
                 }
             }
             // go to next sector
-            if disc.set_next_sector_head_position() && let Some(current_track) = disc.get_current_track() { // end of track
-                let last_track_number = disc.get_tracks().last().map(|track| track.track_number()).unwrap_or(0);
-                if current_track.track_number() == last_track_number {
-                    info!("Reached end of disc, stopping...");
-                    self.change_drive_state(DriveState::Idle);
-                    self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
-                }
+            if disc.set_next_sector_head_position() {
+                end_of_track = true;
             }
         }
+        if end_of_track {
+            self.handle_end_of_track(irq_handler);
+        }
         send_int1
+    }
+
+    fn handle_end_of_track(&mut self,irq_handler:&mut IrqHandler) {
+        if let Some(disc) = &self.disc && let Some(current_track) = disc.get_current_track() { // end of track
+            let last_track_number = disc.get_tracks().last().map(|track| track.track_number()).unwrap_or(0);
+            if current_track.track_number() == last_track_number {
+                info!("Reached end of disc, stopping...");
+                self.activate_motor(false);
+                self.change_drive_state(DriveState::Idle);
+                self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
+            }
+        }
     }
 
     pub(super) fn read_audio_sector(&mut self,send_report_flag:bool,report_absolute:bool,irq_handler:&mut IrqHandler) {
         let stat = self.get_stat(false,false,false);
         let mut report = [0u8; 8];
         let mut send_report = false;
+        let mut end_of_track = false;
 
         if let Some(disc) = self.disc.as_mut() {
-            match disc.read_sector() {
-                Some(sector) => {
+            let read_result = disc.read_sector();
+            match read_result {
+                SectorReadResult::SectorReadOk(sector) => {
                     debug!("Playing audio sector at {:?}",disc.get_head_position());
                     self.last_audio_sector = sector.get_audio_data();
                 }
-                None => {
-                    warn!("CDROM read_audio_sector at loc {:?} failed",disc.get_head_position());
-                    exit(1);
+                SectorReadResult::EndOfTrack => { // end of track
+                    end_of_track = true;
+                }
+                SectorReadResult::TrackNotFound => {
+                    error!("CDROM read_data_sector at loc {:?} failed: track not found",disc.get_head_position());
+                }
+                SectorReadResult::SectorReadError(e) => {
+                    error!("CDROM read_audio_sector at loc {:?} failed due to {:?}",disc.get_head_position(),e);
                 }
             }
             // check reporting
@@ -98,12 +123,19 @@ impl CDRom {
             }
 
             // go to next sector
-            let end_of_track = disc.set_next_sector_head_position();
-            if end_of_track && (self.mode & 0x02) != 0 { // auto-pause on for end of track
-                debug!("End of track with auto-pause set...");
-                self.change_drive_state(DriveState::Idle);
-                self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
+            if disc.set_next_sector_head_position() {
+                if (self.mode & 0x02) != 0 { // auto-pause on for end of track
+                    debug!("End of track with auto-pause set...");
+                    self.change_drive_state(DriveState::Idle);
+                    self.apply_irq_and_result(Command::Play,INT4,vec![],irq_handler);
+                }
+                else {
+                    end_of_track = true;
+                }
             }
+        }
+        if end_of_track {
+            self.handle_end_of_track(irq_handler);
         }
         if send_report {
             self.apply_irq_and_result(Command::Play,INT1,report.to_vec(),irq_handler);
