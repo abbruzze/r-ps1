@@ -436,7 +436,7 @@ pub struct LogConfig {
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            log_file: None,
+            log_file: Some(PathBuf::from("r-ps1.log")),
             log_severity: "info".to_string(),
         }
     }

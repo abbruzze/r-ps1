@@ -104,8 +104,18 @@ jobs:
       - name: Zip artifacts
         run: |
           VERSION=${{ needs.prepare.outputs.version }}
-          zip -j artifacts/r-ps1-${VERSION}-linux.zip artifacts/r-ps1-${VERSION}-ubuntu-latest/r-ps1
-          zip -j artifacts/r-ps1-${VERSION}-windows.zip artifacts/r-ps1-${VERSION}-windows-latest/r-ps1.exe
+          
+          mkdir -p r-ps1-${VERSION}
+          cp artifacts/r-ps1-${VERSION}-ubuntu-latest/r-ps1 r-ps1-${VERSION}/
+          cp resources/empty_card.mcd r-ps1-${VERSION}/
+          chmod +x r-ps1-${VERSION}/r-ps1
+          zip -r artifacts/r-ps1-${VERSION}-linux.zip r-ps1-${VERSION}/
+          rm -rf r-ps1-${VERSION}
+          
+          mkdir -p r-ps1-${VERSION}
+          cp artifacts/r-ps1-${VERSION}-windows-latest/r-ps1.exe r-ps1-${VERSION}/
+          cp resources/empty_card.mcd r-ps1-${VERSION}/
+          zip -r artifacts/r-ps1-${VERSION}-windows.zip r-ps1-${VERSION}/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
