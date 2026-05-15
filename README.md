@@ -308,7 +308,7 @@ Below a list of the available commands:
   <img src="/images/batman and robin.png" width="385" height="307"/>
   <br/><br/>
   <img src="/images/c-12 final resistance.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/Castlevania Symphony of the Night.png" width="385" height="307"/>
+  <img src="/images/rayman.png" width="385" height="307"/>
   <br/><br/>
   <img src="/images/driver2.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
   <img src="/images/pandemonium 2.png" width="385" height="307"/>

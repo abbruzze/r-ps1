@@ -709,7 +709,7 @@ impl Spu {
             }
             0xC => {
                 // $1F801C0C + N*$10: Current ADSR level
-                warn!("Unimplemented ADSR level write (voice {voice}): {value:04X}");
+                debug!("Unimplemented ADSR level write (voice {voice}): {value:04X}");
             }
             0xE => {
                 // $1F801C0E + N*$10: ADPCM repeat address
