@@ -286,42 +286,42 @@ Below a list of the available commands:
 
 ## Gallery
 <div align="center">
-  <img src="/images/crash bandicoot 3.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/medal of honor.png" width="481" height="384"/>
+  <img src="/images/crash bandicoot 3.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/medal of honor.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/gran turismo.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/gran turismo 2.png" width="481" height="384"/>
+  <img src="/images/gran turismo.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/gran turismo 2.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/duke nukem.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/jackie chan.png" width="481" height="384"/>
+  <img src="/images/duke nukem.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/jackie chan.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/need for speed 2.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/need for speed 3.png" width="481" height="384"/>
+  <img src="/images/need for speed 2.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/need for speed 3.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/Castlevania Symphony of the Night.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/crash team racing.png" width="481" height="384"/>
+  <img src="/images/Castlevania Symphony of the Night.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/crash team racing.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/tekken3.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/tomb raider 2.png" width="481" height="384"/>
+  <img src="/images/tekken3.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/tomb raider 2.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/apocalypse.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/batman and robin.png" width="481" height="384"/>
+  <img src="/images/apocalypse.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/batman and robin.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/c-12 final resistance.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/Castlevania Symphony of the Night.png" width="481" height="384"/>
+  <img src="/images/c-12 final resistance.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/Castlevania Symphony of the Night.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/driver2.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/pandemonium 2.png" width="481" height="384"/>
+  <img src="/images/driver2.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/pandemonium 2.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/resident evil 2.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/skullmonkeys.png" width="481" height="384"/>
+  <img src="/images/resident evil 2.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/skullmonkeys.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/syphon filter.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/Tony Hawk's Pro Skater 2.png" width="481" height="384"/>
+  <img src="/images/syphon filter.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/Tony Hawk's Pro Skater 2.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/toy story 2.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/urban chaos.png" width="481" height="384"/>
+  <img src="/images/toy story 2.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/urban chaos.png" width="385" height="307"/>
   <br/><br/>
-  <img src="/images/final doom.png" width="481" height="384"/>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="/images/mortal kombat 3.png" width="481" height="384"/>
+  <img src="/images/final doom.png" width="385" height="307"/>&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="/images/mortal kombat 3.png" width="385" height="307"/>
 </div>
