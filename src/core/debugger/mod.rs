@@ -1,9 +1,8 @@
+use crate::core::cpu::disassembler::Disassembled;
 use std::collections::HashSet;
 use std::io;
 use std::io::Write;
 use std::sync::mpsc::{Receiver, Sender};
-use tracing::{error, info};
-use crate::core::cpu::disassembler::Disassembled;
 
 const DUMP_MEMORY_COLUMNS : usize = 16;
 
@@ -118,166 +117,164 @@ impl Debugger {
     }
 
     pub fn execute(&mut self) {
-        info!("Debugger is in step by step mode: {}",self.step_by_step_mode);
+        println!("Debugger started. Press ENTER to step in ...");
         loop {
-            self.wait_resp(false);
-            //if self.step_by_step_mode {
-                let mut input = String::new();
-                print!(">");
-                io::stdout().flush().unwrap();
-                io::stdin().read_line(&mut input).unwrap();
-                let mut command_iter = input.trim().split_ascii_whitespace();
-                let cmd = command_iter.next().or_else(|| Some("")).unwrap();
+        self.wait_resp(false);
+            let mut input = String::new();
+            print!(">");
+            io::stdout().flush().unwrap();
+            io::stdin().read_line(&mut input).unwrap();
+            let mut command_iter = input.trim().split_ascii_whitespace();
+            let cmd = command_iter.next().or_else(|| Some("")).unwrap();
 
-                match cmd {
-                    "log" => {
-                        let args = command_iter.collect::<Vec<&str>>();
-                        if args.len() != 1 {
-                            error!("Wrong number of arguments for 'log' command: expected <level>");
-                        }
-                        else {
-                            self.sender.send(DebuggerCommand::Log(args[0].to_string())).unwrap();
-                        }
-                    },
-                    cmd@"regs" => {
-                        self.sender.send(DebuggerCommand::ReqCpuRegs).unwrap();
+            match cmd {
+                "log" => {
+                    let args = command_iter.collect::<Vec<&str>>();
+                    if args.len() != 1 {
+                        println!("Wrong number of arguments for 'log' command: expected <level>");
+                    }
+                    else {
+                        self.sender.send(DebuggerCommand::Log(args[0].to_string())).unwrap();
+                    }
+                },
+                cmd@"regs" => {
+                    self.sender.send(DebuggerCommand::ReqCpuRegs).unwrap();
+                    self.handle_response(self.receiver.recv().unwrap(),cmd);
+                },
+                cmd@(""|"r") => {
+                    // step
+                    self.sender.send(DebuggerCommand::Step).unwrap();
+                    self.handle_response(self.receiver.recv().unwrap(),cmd);
+                },
+                cmd@"cop0" => {
+                    // step
+                    self.sender.send(DebuggerCommand::ReqCop0Regs).unwrap();
+                    self.handle_response(self.receiver.recv().unwrap(),cmd);
+                },
+                "go" => {
+                    if self.break_points.is_empty() {
+                        self.sender.send(DebuggerCommand::RunModeChanged(RunMode::FreeMode)).unwrap();
+                        println!("No breakpoints set, switching to Free Mode");
+                    }
+                    else {
+                        self.sender.send(DebuggerCommand::RunModeChanged(RunMode::BreakMode(self.break_points.clone()))).unwrap();
+                        self.step_by_step_mode = false;
+                        println!("Breakpoints set, switching to Break Mode");
+                    }
+                },
+                "rw" => {
+                    let args = command_iter.collect::<Vec<&str>>();
+                    if args.len() != 2 {
+                        println!("Wrong number of arguments for 'rw' command: expected <hex address> <length>");
+                    }
+                    else {
+                        let address = u32::from_str_radix(args[0], 16).unwrap();
+                        self.sender.send(DebuggerCommand::ReadMemory(address,self.adjust_mem_len(args[1].parse().unwrap()),32)).unwrap();
                         self.handle_response(self.receiver.recv().unwrap(),cmd);
-                    },
-                    cmd@(""|"r") => {
-                        // step
-                        self.sender.send(DebuggerCommand::Step).unwrap();
+                    }
+                },
+                "rh" => {
+                    let args = command_iter.collect::<Vec<&str>>();
+                    if args.len() != 2 {
+                        println!("Wrong number of arguments for 'rh' command: expected <hex address> <length>");
+                    }
+                    else {
+                        let address = u32::from_str_radix(args[0], 16).unwrap();
+                        self.sender.send(DebuggerCommand::ReadMemory(address,self.adjust_mem_len(args[1].parse().unwrap()),16)).unwrap();
                         self.handle_response(self.receiver.recv().unwrap(),cmd);
-                    },
-                    cmd@"cop0" => {
-                        // step
-                        self.sender.send(DebuggerCommand::ReqCop0Regs).unwrap();
+                    }
+                },
+                "rb" => {
+                    let args = command_iter.collect::<Vec<&str>>();
+                    if args.len() != 2 {
+                        println!("Wrong number of arguments for 'rb' command: expected <hex address> <length>");
+                    }
+                    else {
+                        let address = u32::from_str_radix(args[0], 16).unwrap();
+                        self.sender.send(DebuggerCommand::ReadMemory(address,self.adjust_mem_len(args[1].parse().unwrap()),8)).unwrap();
                         self.handle_response(self.receiver.recv().unwrap(),cmd);
-                    },
-                    "go" => {
-                        if self.break_points.is_empty() {
-                            self.sender.send(DebuggerCommand::RunModeChanged(RunMode::FreeMode)).unwrap();
-                            info!("No breakpoints set, switching to Free Mode");
+                    }
+                },
+                "break"|"b" => {
+                    let args = command_iter.collect::<Vec<&str>>();
+                    if args.len() == 0 {
+                        println!("Break on execute:");
+                        for (i,addr) in self.break_points.execute.iter().enumerate() {
+                            println!("{:02}:{:08X}",i,addr);
                         }
-                        else {
-                            self.sender.send(DebuggerCommand::RunModeChanged(RunMode::BreakMode(self.break_points.clone()))).unwrap();
-                            self.step_by_step_mode = false;
-                            info!("Breakpoints set, switching to Break Mode");
+                        println!("Break on read:");
+                        for (i,addr) in self.break_points.read.iter().enumerate() {
+                            println!("{:02}:{:08X}",i,addr);
                         }
-                    },
-                    "rw" => {
-                        let args = command_iter.collect::<Vec<&str>>();
-                        if args.len() != 2 {
-                            error!("Wrong number of arguments for 'rw' command: expected <hex address> <length>");
+                        println!("Break on write:");
+                        for (i,addr) in self.break_points.write.iter().enumerate() {
+                            println!("{:02}:{:08X}",i,addr);
                         }
-                        else {
-                            let address = u32::from_str_radix(args[0], 16).unwrap();
-                            self.sender.send(DebuggerCommand::ReadMemory(address,self.adjust_mem_len(args[1].parse().unwrap()),32)).unwrap();
-                            self.handle_response(self.receiver.recv().unwrap(),cmd);
-                        }
-                    },
-                    "rh" => {
-                        let args = command_iter.collect::<Vec<&str>>();
-                        if args.len() != 2 {
-                            error!("Wrong number of arguments for 'rh' command: expected <hex address> <length>");
-                        }
-                        else {
-                            let address = u32::from_str_radix(args[0], 16).unwrap();
-                            self.sender.send(DebuggerCommand::ReadMemory(address,self.adjust_mem_len(args[1].parse().unwrap()),16)).unwrap();
-                            self.handle_response(self.receiver.recv().unwrap(),cmd);
-                        }
-                    },
-                    "rb" => {
-                        let args = command_iter.collect::<Vec<&str>>();
-                        if args.len() != 2 {
-                            error!("Wrong number of arguments for 'rb' command: expected <hex address> <length>");
-                        }
-                        else {
-                            let address = u32::from_str_radix(args[0], 16).unwrap();
-                            self.sender.send(DebuggerCommand::ReadMemory(address,self.adjust_mem_len(args[1].parse().unwrap()),8)).unwrap();
-                            self.handle_response(self.receiver.recv().unwrap(),cmd);
-                        }
-                    },
-                    "break"|"b" => {
-                        let args = command_iter.collect::<Vec<&str>>();
-                        if args.len() == 0 {
-                            info!("Break on execute:");
-                            for (i,addr) in self.break_points.execute.iter().enumerate() {
-                                info!("{:02}:{:08X}",i,addr);
-                            }
-                            info!("Break on read:");
-                            for (i,addr) in self.break_points.read.iter().enumerate() {
-                                info!("{:02}:{:08X}",i,addr);
-                            }
-                            info!("Break on write:");
-                            for (i,addr) in self.break_points.write.iter().enumerate() {
-                                info!("{:02}:{:08X}",i,addr);
-                            }
-                            info!("Break on opcode:");
-                            if let Some(opcode) = self.break_points.opcode {
-                                info!("{:08X}",opcode);
-                            }
-                        }
-                        else if args.len() != 3 {
-                            error!("Wrong number of arguments for 'break' command: expected <add/remove> <o|x|r|w> <hex address|opcode>");
-                        }
-                        else {
-                            let bp_type = args[1];
-                            let address = u32::from_str_radix(args[2], 16).unwrap();
-                            let add = match args[0] {
-                                "add"|"a" => true,
-                                "remove"|"r" => false,
-                                _ => {
-                                    error!("Unrecognized breakpoint action: {}",args[0]);
-                                    continue;
-                                }
-                            };
-                            match bp_type {
-                                "o" => {
-                                    if add {
-                                        self.break_points.opcode = Some(address)
-                                    }
-                                    else {
-                                        self.break_points.opcode = None
-                                    }
-                                },
-                                "x" => {
-                                    if add {
-                                        self.break_points.execute.insert(address);
-                                    }
-                                    else {
-                                        self.break_points.execute.remove(&address);
-                                    }
-                                    info!("{} execute breakpoint at {:08X}",if add {"Add"} else {"Remove"},address);
-                                },
-                                "r" => {
-                                    if add {
-                                        self.break_points.read.insert(address);
-                                    }
-                                    else {
-                                        self.break_points.read.remove(&address);
-                                    }
-                                    info!("{} read breakpoint at {:08X}",if add {"Add"} else {"Remove"},address);
-                                },
-                                "w" => {
-                                    if add {
-                                        self.break_points.write.insert(address);
-                                    }
-                                    else {
-                                        self.break_points.write.remove(&address);
-                                    }
-                                    info!("{} write breakpoint at {:08X}",if add {"Add"} else {"Remove"},address);
-                                },
-                                _ => {
-                                    error!("Unrecognized breakpoint type: {}",bp_type);
-                                }
-                            }
+                        println!("Break on opcode:");
+                        if let Some(opcode) = self.break_points.opcode {
+                            println!("{:08X}",opcode);
                         }
                     }
-                    cmd => {
-                        error!("Unrecognized command {cmd}")
+                    else if args.len() != 3 {
+                        println!("Wrong number of arguments for 'break' command: expected <add/remove> <o|x|r|w> <hex address|opcode>");
+                    }
+                    else {
+                        let bp_type = args[1];
+                        let address = u32::from_str_radix(args[2], 16).unwrap();
+                        let add = match args[0] {
+                            "add"|"a" => true,
+                            "remove"|"r" => false,
+                            _ => {
+                                println!("Unrecognized breakpoint action: {}",args[0]);
+                                continue;
+                            }
+                        };
+                        match bp_type {
+                            "o" => {
+                                if add {
+                                    self.break_points.opcode = Some(address)
+                                }
+                                else {
+                                    self.break_points.opcode = None
+                                }
+                            },
+                            "x" => {
+                                if add {
+                                    self.break_points.execute.insert(address);
+                                }
+                                else {
+                                    self.break_points.execute.remove(&address);
+                                }
+                                println!("{} execute breakpoint at {:08X}",if add {"Add"} else {"Remove"},address);
+                            },
+                            "r" => {
+                                if add {
+                                    self.break_points.read.insert(address);
+                                }
+                                else {
+                                    self.break_points.read.remove(&address);
+                                }
+                                println!("{} read breakpoint at {:08X}",if add {"Add"} else {"Remove"},address);
+                            },
+                            "w" => {
+                                if add {
+                                    self.break_points.write.insert(address);
+                                }
+                                else {
+                                    self.break_points.write.remove(&address);
+                                }
+                                println!("{} write breakpoint at {:08X}",if add {"Add"} else {"Remove"},address);
+                            },
+                            _ => {
+                                println!("Unrecognized breakpoint type: {}",bp_type);
+                            }
+                        }
                     }
                 }
-            //}
+                cmd => {
+                    println!("Unrecognized command {cmd}")
+                }
+            }
         }
     }
 
@@ -294,20 +291,20 @@ impl Debugger {
     fn handle_response(&mut self,resp:DebuggerResponse,cmd:&str) {
         match resp {
             DebuggerResponse::BreakAt(address) => {
-                info!("Break at {:08X}",address);
+                println!("Break at {:08X}",address);
                 self.step_by_step_mode = true;
                 self.wait_resp(true);
             },
             DebuggerResponse::CpuRegs(dis,regs,cycles) => {
                 if cmd == "r" || cmd == "regs" {
-                    info!("CPU Registers [{}]:\n{}",cycles,regs.dump());
+                    println!("CPU Registers [{}]:\n{}",cycles,regs.dump());
                 }
                 if cmd != "regs" {
-                    info!("{}", dis.formatted);
+                    println!("{}", dis.formatted);
                 }
             },
             DebuggerResponse::Cop0Regs(regs) => {
-                info!("Cop0 Registers:\n{}",regs.dump());
+                println!("Cop0 Registers:\n{}",regs.dump());
             },
             DebuggerResponse::Memory(address,mem) => {
                 let mut buffer = String::new();
@@ -334,14 +331,14 @@ impl Debugger {
                     buffer.push_str(&elem);
                     address += step;
                     if i != 0 && ((i + 1) % DUMP_MEMORY_COLUMNS) == 0 {
-                        info!("{:08X} {} {}",base_address,buffer,ascii);
+                        println!("{:08X} {} {}",base_address,buffer,ascii);
                         buffer.clear();
                         ascii.clear();
                         base_address = address;
                     }
                 }
                 if !buffer.is_empty() {
-                    info!("{:08X} {} {}",base_address,buffer,ascii);
+                    println!("{:08X} {} {}",base_address,buffer,ascii);
                 }
             },
         }

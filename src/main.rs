@@ -1,10 +1,10 @@
+use crate::core::config::{Config, RegionPolicyConfig};
+use crate::core::emu::{EMU_BUILD_DATE_TIME, EMU_NAME, EMU_VERSION};
+use clap::{Parser, ValueEnum};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use clap::{Parser, ValueEnum};
 use tracing::info;
-use crate::core::config::{Config, RegionPolicyConfig};
-use crate::core::emu::{EMU_BUILD_DATE_TIME, EMU_NAME, EMU_VERSION};
 
 mod core;
 mod log;
@@ -110,8 +110,12 @@ fn main() {
         config.region_policy = region;
     }
     // debugger
-    if args.debugger {
+    if args.debugger || config.debugger_enabled {
         config.debugger_enabled = true;
+        // force log to file
+        if config.log_config.log_file.is_none() {
+            config.log_config.log_file = Some(PathBuf::from("r-ps1.log"));
+        }
     }
     // full screen
     if args.full_screen {
@@ -144,6 +148,7 @@ fn main() {
         let logger = log::Logger::new(config.log_config.log_file.clone(),config.log_config.log_severity.clone());
 
 
+        println!("Welcome to {} v{} compiled on {}",EMU_NAME,EMU_VERSION,EMU_BUILD_DATE_TIME);
         info!("Welcome to {} v{} compiled on {}",EMU_NAME,EMU_VERSION,EMU_BUILD_DATE_TIME);
         info!("Starting emulator from bios at {}",config.bios_path.as_ref().unwrap());
         
