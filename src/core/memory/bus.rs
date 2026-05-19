@@ -866,18 +866,9 @@ impl Bus {
         let address = address & 0x1FFFFF;
         self.main_ram[address as usize..(address as usize + bin.len() )].copy_from_slice(&bin);
     }
-}
-/*
-Memory Exceptions
-  Memory Error ------> Misalignments
-               (and probably also KSEG access in User mode)
-  Bus Error    ------> Unused Memory Regions (including Gaps in I/O Region)
-               (unless RAM/BIOS/Expansion mirrors are mapped to "unused" area)
- */
-impl Memory for Bus {
-    // address alignment is done by the caller
-    fn read<const SIZE: usize>(&mut self, address: u32,is_fetching:bool) -> ReadMemoryAccess {
-        const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32) }
+
+    #[inline(never)]
+    fn read_slow<const SIZE: usize>(&mut self, address: u32, is_fetching: bool) -> ReadMemoryAccess {
         // get address's info
         let MemoryMap(segment,section,address,offset) = get_memory_map(address);
         if DEBUG_MEM {
@@ -908,14 +899,9 @@ impl Memory for Bus {
                     ReadMemoryAccess::BusError
                 }
                 else {
-                //else if offset < 0x400 {
                     // masking the offset with 0x3FF fixed Crash Bandicoot 3
                     let read = <Self as Memory>::mem_read::<SIZE>(offset & 0x3FF,&self.scratchpad);
                     ReadMemoryAccess::Read(read,SCRATCHPAD_READ_CYCLES)
-                /*}
-                else {
-                    warn!("Reading from an unmapped scratchpad address: {:08X}",address);
-                    ReadMemoryAccess::BusError*/
                 }
             },
             // BIOS ======================================================================================
@@ -981,19 +967,8 @@ impl Memory for Bus {
         }
     }
 
-    fn write<const SIZE: usize>(&mut self, address: u32, value: u32) -> WriteMemoryAccess {
-        const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32) }
-        // check if cache is isolated
-        let cache_isolated = self.cop0.is_cache_isolated();
-        if cache_isolated {
-            // If cache is isolated, send writes directly to instruction cache
-            return if (self.cache_control_reg & 0x04) != 0 { // TAG    Enable cache tag test mode (when COP0_SR.IsC=1, used to flush i-cache)
-                WriteMemoryAccess::InvalidateICacheTag
-            } else {
-                WriteMemoryAccess::InvalidateICacheOpcode
-            }
-        };
-
+    #[inline(never)]
+    fn write_slow<const SIZE: usize>(&mut self, address: u32, value: u32) -> WriteMemoryAccess {
         // get address's info
         let MemoryMap(segment,section,address,offset) = get_memory_map(address);
         if DEBUG_MEM {
@@ -1046,7 +1021,6 @@ impl Memory for Bus {
             // Expansion 1 ===============================================================================
             MemorySection::ExpansionRegion1 => {
                 debug!("Writing Expansion 1 {:08X} = {:08X}",address,value);
-                // TODO
                 let penalty = match SIZE {
                     8 => EXP1_8_ACCESS_CYCLES,
                     16 => EXP1_16_ACCESS_CYCLES,
@@ -1067,7 +1041,6 @@ impl Memory for Bus {
                     info!("BIOS at stage {}",value & 0xF);
                 }
                 debug!("Writing Expansion 2 {:08X} = {:08X}",address,value);
-                // TODO
                 let penalty = match SIZE {
                     8 => EXP2_8_ACCESS_CYCLES,
                     16 => EXP2_16_ACCESS_CYCLES,
@@ -1079,7 +1052,6 @@ impl Memory for Bus {
             // Expansion 3 ===============================================================================
             MemorySection::ExpansionRegion3 => {
                 debug!("Writing Expansion 3 {:08X} = {:08X}",address,value);
-                // TODO
                 let penalty = match SIZE {
                     8 => EXP3_8_ACCESS_CYCLES,
                     16 => EXP3_16_ACCESS_CYCLES,
@@ -1099,6 +1071,85 @@ impl Memory for Bus {
                 WriteMemoryAccess::BusError
             }
         }
+    }
+}
+/*
+Memory Exceptions
+  Memory Error ------> Misalignments
+               (and probably also KSEG access in User mode)
+  Bus Error    ------> Unused Memory Regions (including Gaps in I/O Region)
+               (unless RAM/BIOS/Expansion mirrors are mapped to "unused" area)
+ */
+impl Memory for Bus {
+    // address alignment is done by the caller
+    #[inline(always)]
+    fn read<const SIZE: usize>(&mut self, address: u32,is_fetching:bool) -> ReadMemoryAccess {
+        const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32) }
+
+        // ===== FAST PATH: RAM (covers KUSEG 0x00000000, KSEG0 0x80000000, KSEG1 0xA0000000) =====
+        // Strip top 3 bits to get physical address, then check if it's in RAM range
+        let physical = address & 0x1FFF_FFFF;
+        if physical < 0x0080_0000 {
+            // RAM mirror: 2MB mirrored in first 8MB
+            let ram_offset = (physical & 0x001F_FFFF) as usize;
+            let value = unsafe {
+                match SIZE {
+                    8 => *self.main_ram.get_unchecked(ram_offset) as u32,
+                    16 => {
+                        let ptr = self.main_ram.as_ptr().add(ram_offset) as *const u16;
+                        u16::from_le(ptr.read_unaligned()) as u32
+                    }
+                    32 => {
+                        let ptr = self.main_ram.as_ptr().add(ram_offset) as *const u32;
+                        u32::from_le(ptr.read_unaligned())
+                    }
+                    _ => unreachable!()
+                }
+            };
+            return ReadMemoryAccess::Read(value, RAM_ACCESS_CYCLES);
+        }
+
+        // ===== SLOW PATH: everything else =====
+        self.read_slow::<SIZE>(address, is_fetching)
+    }
+    #[inline(always)]
+    fn write<const SIZE: usize>(&mut self, address: u32, value: u32) -> WriteMemoryAccess {
+        const { assert!(SIZE == 8 || SIZE == 16 || SIZE == 32) }
+        // check if cache is isolated
+        let cache_isolated = self.cop0.is_cache_isolated();
+        if cache_isolated {
+            // If cache is isolated, send writes directly to instruction cache
+            return if (self.cache_control_reg & 0x04) != 0 { // TAG    Enable cache tag test mode (when COP0_SR.IsC=1, used to flush i-cache)
+                WriteMemoryAccess::InvalidateICacheTag
+            } else {
+                WriteMemoryAccess::InvalidateICacheOpcode
+            }
+        };
+        // ===== FAST PATH: RAM =====
+        let physical = address & 0x1FFF_FFFF;
+        if physical < 0x0080_0000 {
+            let ram_offset = (physical & 0x001F_FFFF) as usize;
+            unsafe {
+                match SIZE {
+                    8 => {
+                        *self.main_ram.get_unchecked_mut(ram_offset) = value as u8;
+                    }
+                    16 => {
+                        let ptr = self.main_ram.as_mut_ptr().add(ram_offset) as *mut u16;
+                        ptr.write_unaligned((value as u16).to_le());
+                    }
+                    32 => {
+                        let ptr = self.main_ram.as_mut_ptr().add(ram_offset) as *mut u32;
+                        ptr.write_unaligned(value.to_le());
+                    }
+                    _ => unreachable!()
+                }
+            }
+            return WriteMemoryAccess::Write(RAM_ACCESS_CYCLES);
+        }
+
+        // ===== SLOW PATH =====
+        self.write_slow::<SIZE>(address, value)
     }
 
     fn peek<const SIZE: usize>(&self, address: u32) -> Option<u32> {

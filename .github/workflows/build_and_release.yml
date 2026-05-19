@@ -45,7 +45,7 @@ jobs:
 
       # 📦 Build
       - name: Build
-        run: cargo build --profile fast
+        run: RUSTFLAGS="-C target-cpu=native" cargo build --profile fast
 
       # Linux binary stripping
       - name: Strip binary
