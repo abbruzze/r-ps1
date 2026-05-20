@@ -139,12 +139,14 @@ impl GPU {
                     return GPUTimings::rectangle(0, is_textured, semi_transparent);
                 }
 
+                let uv_offset_x = (vertex.x - rec.x) as u8;
+                let uv_offset_y = (vertex.y - rec.y) as u8;
                 let origin_x = vertex.x;
 
                 match uv {
                     Some(uv) => { // textured
-                        let base_u = uv as u8;
-                        let base_v = (uv >> 8) as u8;
+                        let base_u = (uv as u8).wrapping_add(uv_offset_x);
+                        let base_v = ((uv >> 8) as u8).wrapping_add(uv_offset_y);
                         let clut = uv >> 16;
                         let clut_x = clut & 0x3F; // 0-5    X coordinate X/16
                         let clut_y = (clut >> 6) & 0x1FF; // 6-14   Y coordinate 0-511
