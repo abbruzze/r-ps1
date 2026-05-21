@@ -46,8 +46,8 @@ jobs:
       # 📦 Build
       - name: Build
         run: cargo build --profile fast
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
+      #  env:
+      #    RUSTFLAGS: "-C target-cpu=native"
 
       # Linux binary stripping
       - name: Strip binary
