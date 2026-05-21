@@ -570,7 +570,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             .with_window_icon(Some(icon))
             .with_resizable(true);
 
-        let window = event_loop.create_window(window_attrs).unwrap();
+        let window = event_loop.create_window(window_attrs).expect("Cannot initialize main window");
         let window_ref: &'static Window = Box::leak(Box::new(window));
 
         if self.mouse_enabled {
@@ -605,7 +605,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             compatible_surface: None,
             force_fallback_adapter: false,
         });
-        let mut pixels = builder.build().expect("create pixels");
+        let mut pixels = builder.build().expect("Cannot create pixels canvas");
         pixels.set_present_mode(wgpu::PresentMode::Immediate); // can be changed to Fifo for VSync
         pixels.frame_mut().fill(0);
 
