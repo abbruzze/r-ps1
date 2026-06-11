@@ -25,7 +25,7 @@ My first Rust development after years of Scala and OO projects, it was not a sim
 - MDEC (Motion Decoder)
 - CD-ROM, most of the commands implemented
   - ADPCM
-  - the timings emulation should be improved to increase the number of playable games
+  - the emulation timings should be improved to increase the number of playable games
 - Timers
 - NTSC and PAL support
 - Controllers
