@@ -387,30 +387,29 @@ impl PixelsRenderer {
         if duration >= FPS_PERIOD_MILLIS || update_now || self.warp_mode {
             let fps = (self.fps_frames as f64 / (duration as f64 / 1000.0)).ceil();
             if let Some(window) = self.window {
-                let cd_info : String = match &self.last_cd_access {
-                    Some(access) => {
-                        match access {
-                            CDOperation::Reading(time) => {
-                                format!("[CD R {:02}:{:02}]",time.m(),time.s())
-                            },
-                            CDOperation::Playing(time) => {
-                                format!("[CD P {:02}:{:02}]",time.m(),time.s())
+                let mut cd_info = String::from("");
+                if self.config.cdrom_config.show_cdrom_access {
+                    cd_info = match &self.last_cd_access {
+                        Some(access) => {
+                            match access {
+                                CDOperation::Reading(time) => {
+                                    format!("[CD R {:02}:{:02}]",time.m(),time.s())
+                                },
+                                CDOperation::Playing(time) => {
+                                    format!("[CD P {:02}:{:02}]",time.m(),time.s())
+                                }
+                                CDOperation::Idle => {
+                                    String::from("")
+                                }
+                                _ => String::from("")
                             }
-                            CDOperation::Idle => {
-                                String::from("")
-                            }
-                            _ => String::from("")
                         }
-                    }
-                    None => String::from("")
-                };
-                let mut message : Option<String> = None;
-                let disc_name = if self.config.cdrom_config.show_cdrom_access {
-                    self.disc_name.clone().unwrap_or_else(|| String::from(""))
+                        None => String::from("")
+                    };
                 }
-                else {
-                    String::from("")
-                };
+                let mut message : Option<String> = None;
+                let disc_name = self.disc_name.clone().unwrap_or_else(|| String::from(""));
+
                 if let Some(unzipping) = &self.disc_unzipping {
                     window.set_title(&format!("{} v.{} - Unzipping disc {} ...",EMU_NAME,EMU_VERSION,unzipping));
                     message = Some(format!("Unzipping disc {} ...",unzipping));

@@ -441,16 +441,34 @@ impl Default for LogConfig {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GPUConfig {
     pub command_delay_enabled: bool,
     pub rendering_type: Option<String>,
     pub start_full_screen: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+impl Default for GPUConfig {
+    fn default() -> Self {
+        Self {
+            command_delay_enabled: false,
+            rendering_type: Some("Bilinear".to_string()),
+            start_full_screen: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CdromConfig {
     pub show_cdrom_access: bool,
+}
+
+impl Default for CdromConfig {
+    fn default() -> Self {
+        Self {
+            show_cdrom_access: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
