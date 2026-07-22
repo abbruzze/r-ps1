@@ -7,7 +7,7 @@
   <img src="images/r-ps1_logo.png" alt="r-ps1 logo" width="614">
 </div>
 
-# R-PS1 ver 0.9.3
+# R-PS1 ver 0.9.4
 Rust Playstation 1 emulator
 
 My first Rust development after years of Scala and OO projects, it was not a simple task but gave me a new perspective about software programming.
@@ -25,7 +25,7 @@ My first Rust development after years of Scala and OO projects, it was not a sim
 - MDEC (Motion Decoder)
 - CD-ROM, most of the commands implemented
   - ADPCM
-  - the timings emulation should be improved to increase the number of playable games
+  - the emulation timings should be improved to increase the number of playable games
 - Timers
 - NTSC and PAL support
 - Controllers
