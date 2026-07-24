@@ -1,8 +1,23 @@
+use crate::core::controllers::MemoryCardCommand;
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::io::{ErrorKind, Read, Write};
 use tracing::{info, warn};
-use crate::core::controllers::MemoryCardCommand;
+
+/// Snapshot of the full Controller state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryCardState {
+    memory: Vec<u8>,
+    present: bool,
+    file_name: Option<String>,
+    flag: u8,
+    sector_number: u16,
+    checksum: u8,
+    bytes_count: usize,
+    modified: bool,
+}
 
 #[derive(Debug)]
 pub struct MemoryCard {
@@ -142,5 +157,33 @@ impl MemoryCard {
             info!("Memory card '{file_name}' loaded successfully.");
             Ok(())
         }
+    }
+}
+
+impl SnapshotAware for MemoryCard {
+    type State = MemoryCardState;
+
+    fn snapshot(&self) -> MemoryCardState {
+        MemoryCardState {
+            memory: self.memory.clone(),
+            present: self.present,
+            file_name: self.file_name.clone(),
+            flag: self.flag,
+            sector_number: self.sector_number,
+            checksum: self.checksum,
+            bytes_count: self.bytes_count,
+            modified: self.modified,
+        }
+    }
+
+    fn restore(&mut self, state: MemoryCardState) {
+        self.memory = state.memory;
+        self.present = state.present;
+        self.file_name = state.file_name;
+        self.flag = state.flag;
+        self.sector_number = state.sector_number;
+        self.checksum = state.checksum;
+        self.bytes_count = state.bytes_count;
+        self.modified = state.modified;
     }
 }

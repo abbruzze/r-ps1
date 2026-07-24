@@ -1,9 +1,11 @@
-use tracing::debug;
+use crate::core::Resettable;
 use crate::core::clock::{Clock, EventType};
 use crate::core::interrupt::{InterruptType, IrqHandler};
-use crate::core::Resettable;
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
+use tracing::debug;
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
 pub enum TimerClockSource {
     SystemClock,
     DotClock,
@@ -11,7 +13,7 @@ pub enum TimerClockSource {
     SystemClockDiv8
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
 enum TimerSyncMode {
     NoSync,
     // Timer 0 & 1 modes
@@ -24,7 +26,7 @@ enum TimerSyncMode {
     FreeRun,
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
 enum TimerIRQRepeatMode {
     OneShot,
     Repeatedly,
@@ -41,7 +43,7 @@ impl TimerIRQRepeatMode {
     }
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
 enum TimerIRQPulseMode {
     Pulse,
     Toggle,
@@ -166,17 +168,74 @@ pub struct Timer<const N: usize> {
     blank_pending_cycles: u64,
 }
 
-impl Resettable for Timer<0> {
-    fn reset_component(&mut self, _hard_reset: bool) {
-        self.reset();
+#[derive(Serialize, Deserialize)]
+pub struct TimerState {
+    counter: u16,
+    counter_mode: u16,
+    counter_target: u16,
+    clock_source: TimerClockSource,
+    sync_mode: TimerSyncMode,
+    inside_video_blank: bool,
+    video_blank_occurred_once: bool,
+    irq_repeat_mode: TimerIRQRepeatMode,
+    irq_pulse_mode: TimerIRQPulseMode,
+    irq_one_shot_fired: bool,
+    timer_start_timestamp: u64,
+    timer_target_timestamp: u64,
+    blank_start_timestamp: u64,
+    blank_end_timestamp: u64,
+    dot_clock_divider: usize,
+    blank_paused_cycles: u64,
+    blank_pending_cycles: u64,
+}
+
+impl<const N: usize> SnapshotAware for Timer<N> {
+    type State = TimerState;
+
+    fn snapshot(&self) -> TimerState {
+        TimerState {
+            counter: self.counter,
+            counter_mode: self.counter_mode,
+            counter_target: self.counter_target,
+            clock_source: self.clock_source.clone(),
+            sync_mode: self.sync_mode.clone(),
+            inside_video_blank: self.inside_video_blank,
+            video_blank_occurred_once: self.video_blank_occurred_once,
+            irq_repeat_mode: self.irq_repeat_mode.clone(),
+            irq_pulse_mode: self.irq_pulse_mode.clone(),
+            irq_one_shot_fired: self.irq_one_shot_fired,
+            timer_start_timestamp: self.timer_start_timestamp,
+            timer_target_timestamp: self.timer_target_timestamp,
+            blank_start_timestamp: self.blank_start_timestamp,
+            blank_end_timestamp: self.blank_end_timestamp,
+            dot_clock_divider: self.dot_clock_divider,
+            blank_paused_cycles: self.blank_paused_cycles,
+            blank_pending_cycles: self.blank_pending_cycles,
+        }
+    }
+
+    fn restore(&mut self, state: TimerState) {
+        self.counter = state.counter;
+        self.counter_mode = state.counter_mode;
+        self.counter_target = state.counter_target;
+        self.clock_source = state.clock_source;
+        self.sync_mode = state.sync_mode;
+        self.inside_video_blank = state.inside_video_blank;
+        self.video_blank_occurred_once = state.video_blank_occurred_once;
+        self.irq_repeat_mode = state.irq_repeat_mode;
+        self.irq_pulse_mode = state.irq_pulse_mode;
+        self.irq_one_shot_fired = state.irq_one_shot_fired;
+        self.timer_start_timestamp = state.timer_start_timestamp;
+        self.timer_target_timestamp = state.timer_target_timestamp;
+        self.blank_start_timestamp = state.blank_start_timestamp;
+        self.blank_end_timestamp = state.blank_end_timestamp;
+        self.dot_clock_divider = state.dot_clock_divider;
+        self.blank_paused_cycles = state.blank_paused_cycles;
+        self.blank_pending_cycles = state.blank_pending_cycles;
     }
 }
-impl Resettable for Timer<1> {
-    fn reset_component(&mut self, _hard_reset: bool) {
-        self.reset();
-    }
-}
-impl Resettable for Timer<2> {
+
+impl<const N: usize> Resettable for Timer<N> {
     fn reset_component(&mut self, _hard_reset: bool) {
         self.reset();
     }

@@ -1,9 +1,27 @@
 mod memory_card;
 
-use crate::core::config::ControllerConfig;
-use crate::core::controllers::memory_card::MemoryCard;
 use crate::core::Resettable;
+use crate::core::controllers::memory_card::{MemoryCard, MemoryCardState};
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
+
+/// Snapshot of the full Controller state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControllerState {
+    id: u8,
+    controller_type: ControllerType,
+    digital_switches: u16,
+    analog_switches: u32,
+    mouse_switches: MouseSwitches,
+    state: ControllerStateMachine,
+    connected: bool,
+    memory_card: MemoryCardState,
+    memory_card_selected: bool,
+    memory_card_sector: u16,
+    last_cmd: u8,
+    write_checksum: u8,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub enum ControllerButton {
@@ -32,7 +50,7 @@ pub enum MouseInfo {
     DXYMotion(i8,i8),
 }
 
-#[derive(Debug,Default,Copy, Clone)]
+#[derive(Debug,Default,Copy, Clone, Serialize, Deserialize)]
 pub enum ControllerType {
     #[default]
     Digital,
@@ -68,8 +86,8 @@ impl From<crate::core::config::ControllerType> for ControllerType {
     }
 }
 
-#[derive(Debug,Default)]
-enum ControllerState {
+#[derive(Debug,Default, Clone, Serialize, Deserialize)]
+enum ControllerStateMachine {
     #[default]
     Init,
     IdLo,
@@ -109,7 +127,7 @@ enum MemoryCardCommand {
     GetId,
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug,Default, Clone, Serialize, Deserialize)]
 struct MouseSwitches {
     right_button: bool,
     left_button: bool,
@@ -119,7 +137,7 @@ struct MouseSwitches {
 
 impl Resettable for Controller {
     fn reset_component(&mut self, _hard_reset: bool) {
-        self.state = ControllerState::Init;
+        self.state = ControllerStateMachine::Init;
         self.memory_card.reset();
         self.memory_card_selected = false;
         self.digital_switches = 0xFFFF;
@@ -136,7 +154,7 @@ pub struct Controller {
     digital_switches: u16,
     analog_switches: u32,
     mouse_switches: MouseSwitches,
-    state: ControllerState,
+    state: ControllerStateMachine,
     connected: bool,
     memory_card: MemoryCard,
     memory_card_selected: bool,
@@ -154,7 +172,7 @@ impl Controller {
             digital_switches: 0xFFFF,
             analog_switches: 0,
             mouse_switches: MouseSwitches::default(),
-            state: ControllerState::Init,
+            state: ControllerStateMachine::Init,
             connected,
             memory_card: MemoryCard::new(),
             memory_card_selected: false,
@@ -210,13 +228,13 @@ impl Controller {
     }
 
     pub fn reset(&mut self) {
-        self.state = ControllerState::Init;
+        self.state = ControllerStateMachine::Init;
         //self.memory_card.reset();
         self.memory_card_selected = false;
     }
 
     pub fn ack(&self) -> bool {
-        !matches!(self.state,ControllerState::Init)
+        !matches!(self.state,ControllerStateMachine::Init)
     }
 
     /*
@@ -281,79 +299,79 @@ impl Controller {
      */
     fn read_mem_card_byte_after_command(&mut self,cmd:u8) -> u8 {
         let response = match self.state {
-            ControllerState::MemCommand => {
+            ControllerStateMachine::MemCommand => {
                 match cmd {
                     b'R' => {
                         self.memory_card.set_command(MemoryCardCommand::Read);
-                        self.state = ControllerState::MemId1;
+                        self.state = ControllerStateMachine::MemId1;
                         self.memory_card.get_flag()
                     }
                     b'W' => {
                         self.memory_card.set_command(MemoryCardCommand::Write);
-                        self.state = ControllerState::MemId1;
+                        self.state = ControllerStateMachine::MemId1;
                         self.memory_card.get_flag()
                     }
                     b'S' => {
                         self.memory_card.set_command(MemoryCardCommand::GetId);
-                        self.state = ControllerState::MemId1;
+                        self.state = ControllerStateMachine::MemId1;
                         self.memory_card.get_flag()
                     }
                     _ => {
                         warn!("Unknown command in memory card {:02X}",cmd);
-                        self.state = ControllerState::Init;
+                        self.state = ControllerStateMachine::Init;
                         cmd
                     }
                 }
             }
-            ControllerState::MemId1 => {
-                self.state = ControllerState::MemId2;
+            ControllerStateMachine::MemId1 => {
+                self.state = ControllerStateMachine::MemId2;
                 (self.memory_card.get_id() >> 8) as u8
             }
-            ControllerState::MemId2 => {
+            ControllerStateMachine::MemId2 => {
                 if matches!(self.memory_card.get_command(),MemoryCardCommand::GetId) {
-                    self.state = ControllerState::MemAck1;
+                    self.state = ControllerStateMachine::MemAck1;
                 }
                 else {
-                    self.state = ControllerState::MemMSB;
+                    self.state = ControllerStateMachine::MemMSB;
                 }
                 self.memory_card.get_id() as u8
             }
-            ControllerState::MemMSB => {
-                self.state = ControllerState::MemLSB;
+            ControllerStateMachine::MemMSB => {
+                self.state = ControllerStateMachine::MemLSB;
                 self.memory_card_sector = (cmd as u16) << 8;
                 0x00
             }
-            ControllerState::MemLSB => {
+            ControllerStateMachine::MemLSB => {
                 self.memory_card_sector |= cmd as u16;
                 self.memory_card.set_sector_number(self.memory_card_sector);
                 if matches!(self.memory_card.get_command(),MemoryCardCommand::Read) {
-                    self.state = ControllerState::MemAck1;
+                    self.state = ControllerStateMachine::MemAck1;
                 }
                 else {
-                    self.state = ControllerState::MemSendDataSector;
+                    self.state = ControllerStateMachine::MemSendDataSector;
                 }
                 self.last_cmd
             }
-            ControllerState::MemAck1 => {
-                self.state = ControllerState::MemAck2;
+            ControllerStateMachine::MemAck1 => {
+                self.state = ControllerStateMachine::MemAck2;
                 (self.memory_card.get_command_ack() >> 8) as u8
             }
-            ControllerState::MemAck2 => {
+            ControllerStateMachine::MemAck2 => {
                 self.state = match self.memory_card.get_command() {
-                    MemoryCardCommand::Read => ControllerState::MemConfirmedMSB,
-                    MemoryCardCommand::GetId => ControllerState::MemGetIdEpilogue(1),
-                    MemoryCardCommand::Write => ControllerState::MemEndByteWrite,
+                    MemoryCardCommand::Read => ControllerStateMachine::MemConfirmedMSB,
+                    MemoryCardCommand::GetId => ControllerStateMachine::MemGetIdEpilogue(1),
+                    MemoryCardCommand::Write => ControllerStateMachine::MemEndByteWrite,
                 };
 
                 self.memory_card.get_command_ack() as u8
             }
-            ControllerState::MemGetIdEpilogue(index) => {
+            ControllerStateMachine::MemGetIdEpilogue(index) => {
                 if index == 4 {
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     self.memory_card_selected = false;
                 }
                 else {
-                    self.state = ControllerState::MemGetIdEpilogue(index + 1);
+                    self.state = ControllerStateMachine::MemGetIdEpilogue(index + 1);
                 }
                 match index {
                     1 => 0x04,
@@ -362,8 +380,8 @@ impl Controller {
                     _ => unreachable!()
                 }
             }
-            ControllerState::MemConfirmedMSB => {
-                self.state = ControllerState::MemConfirmedLSB;
+            ControllerStateMachine::MemConfirmedMSB => {
+                self.state = ControllerStateMachine::MemConfirmedLSB;
                 let sector = self.memory_card.get_sector_number();
                 if sector > 0x3FF {
                     0xFF
@@ -372,49 +390,49 @@ impl Controller {
                     (sector >> 8) as u8
                 }
             }
-            ControllerState::MemConfirmedLSB => {
+            ControllerStateMachine::MemConfirmedLSB => {
                 let sector = self.memory_card.get_sector_number();
                 if sector > 0x3FF {
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     self.memory_card_selected = false;
                     0xFF
                 }
                 else {
-                    self.state = ControllerState::MemReadDataSector;
+                    self.state = ControllerStateMachine::MemReadDataSector;
                     sector as u8
                 }
             }
-            ControllerState::MemReadDataSector => {
+            ControllerStateMachine::MemReadDataSector => {
                 let (byte,last) = self.memory_card.read_sector_data();
                 if last {
-                    self.state = ControllerState::MemChecksum;
+                    self.state = ControllerStateMachine::MemChecksum;
                 }
                 byte
             }
-            ControllerState::MemChecksum => {
+            ControllerStateMachine::MemChecksum => {
                 if matches!(self.memory_card.get_command(),MemoryCardCommand::Read) {
-                    self.state = ControllerState::MemEndByteRead;
+                    self.state = ControllerStateMachine::MemEndByteRead;
                     self.memory_card.get_checksum()
                 }
                 else {
                     self.write_checksum = cmd;
-                    self.state = ControllerState::MemAck1;
+                    self.state = ControllerStateMachine::MemAck1;
                     self.last_cmd
                 }
             }
-            ControllerState::MemEndByteRead => {
-                self.state = ControllerState::Init;
+            ControllerStateMachine::MemEndByteRead => {
+                self.state = ControllerStateMachine::Init;
                 self.memory_card_selected = false;
                 0x47
             }
-            ControllerState::MemSendDataSector => {
+            ControllerStateMachine::MemSendDataSector => {
                 if self.memory_card.write_sector_data(cmd) {
-                    self.state = ControllerState::MemChecksum;
+                    self.state = ControllerStateMachine::MemChecksum;
                 }
                 self.last_cmd
             }
-            ControllerState::MemEndByteWrite => {
-                self.state = ControllerState::Init;
+            ControllerStateMachine::MemEndByteWrite => {
+                self.state = ControllerStateMachine::Init;
                 self.memory_card_selected = false;
                 if self.write_checksum == self.memory_card.get_checksum() {
                     0x47
@@ -437,101 +455,101 @@ impl Controller {
         debug!("controller[#{}] read_byte for {cmd:02X} with state {:?}",self.id,self.state);
 
         let byte = match self.state {
-            ControllerState::Init => {
+            ControllerStateMachine::Init => {
                 if cmd == 0x01 && self.connected {
                     self.memory_card_selected = false;
-                    self.state = ControllerState::IdLo;
+                    self.state = ControllerStateMachine::IdLo;
                 }
                 else if cmd == 0x81 && self.memory_card.is_present() {
                     self.memory_card_selected = true;
-                    self.state = ControllerState::MemCommand;
+                    self.state = ControllerStateMachine::MemCommand;
                 }
                 0xFF
             }
-            ControllerState::IdLo => {
+            ControllerStateMachine::IdLo => {
                 if (0x40..0x50).contains(&cmd) {
                     self.last_cmd = cmd;
                     // if cmd != 0x42 {
                     //     println!("Controller received a non 0x42 command: {cmd:02X}");
                     //     self.state = ControllerState::Init;
                     // }
-                    self.state = ControllerState::IdHi;
+                    self.state = ControllerStateMachine::IdHi;
                 }
                 else {
                     warn!("Unexpected controller[#{}] command on state {:?}: {:02X}",self.id,self.state,cmd);
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                 }
                 self.controller_type.id() as u8
             }
-            ControllerState::IdHi => {
+            ControllerStateMachine::IdHi => {
                 if self.last_cmd == 0x42 {
                     if self.controller_type.is_mouse() {
-                        self.state = ControllerState::MouseButtonsLo;
+                        self.state = ControllerStateMachine::MouseButtonsLo;
                     }
                     else {
-                        self.state = ControllerState::SwLo;
+                        self.state = ControllerStateMachine::SwLo;
                     }
                 }
                 else {
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                 }
                 (self.controller_type.id() >> 8) as u8
             }
-            ControllerState::SwLo => {
-                self.state = ControllerState::SwHi;
+            ControllerStateMachine::SwLo => {
+                self.state = ControllerStateMachine::SwHi;
                 self.digital_switches as u8
             }
-            ControllerState::SwHi => {
+            ControllerStateMachine::SwHi => {
                 self.state = if self.controller_type.is_digital() {
-                    ControllerState::Init
+                    ControllerStateMachine::Init
                 }
                 else {
-                    ControllerState::Analog0
+                    ControllerStateMachine::Analog0
                 };
                 //println!("Digital switches: {:04X}",self.digital_switches);
                 (self.digital_switches >> 8) as u8
             }
-            ControllerState::Analog0 => {
+            ControllerStateMachine::Analog0 => {
                 if cmd == 0x00 {
-                    self.state = ControllerState::Analog1;
+                    self.state = ControllerStateMachine::Analog1;
                     (self.analog_switches & 0xFF) as u8
                 }
                 else {
                     warn!("Unexpected controller command on state {:?}: {:02X}",self.state,cmd);
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     0xFF
                 }
             }
-            ControllerState::Analog1 => {
+            ControllerStateMachine::Analog1 => {
                 if cmd == 0x00 {
-                    self.state = ControllerState::Analog2;
+                    self.state = ControllerStateMachine::Analog2;
                     ((self.analog_switches >> 8) & 0xFF) as u8
                 }
                 else {
                     warn!("Unexpected controller command on state {:?}: {:02X}",self.state,cmd);
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     0xFF
                 }
             }
-            ControllerState::Analog2 => {
+            ControllerStateMachine::Analog2 => {
                 if cmd == 0x00 {
-                    self.state = ControllerState::Analog3;
+                    self.state = ControllerStateMachine::Analog3;
                     ((self.analog_switches >> 16) & 0xFF) as u8
                 }
                 else {
                     warn!("Unexpected controller command on state {:?}: {:02X}",self.state,cmd);
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     0xFF
                 }
             }
-            ControllerState::Analog3 => {
+            ControllerStateMachine::Analog3 => {
                 if cmd == 0x00 {
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     ((self.analog_switches >> 24) & 0xFF) as u8
                 }
                 else {
                     warn!("Unexpected controller command on state {:?}: {:02X}",self.state,cmd);
-                    self.state = ControllerState::Init;
+                    self.state = ControllerStateMachine::Init;
                     0xFF
                 }
             }
@@ -543,12 +561,12 @@ impl Controller {
               11    Left Button      (0=Pressed, 1=Released)
               12-15 Not used         (All bits always 1)
              */
-            ControllerState::MouseButtonsLo => {
-                self.state = ControllerState::MouseButtonsHi;
+            ControllerStateMachine::MouseButtonsLo => {
+                self.state = ControllerStateMachine::MouseButtonsHi;
                 0xFF
             }
-            ControllerState::MouseButtonsHi => {
-                self.state = ControllerState::MouseMovementLo;
+            ControllerStateMachine::MouseButtonsHi => {
+                self.state = ControllerStateMachine::MouseMovementLo;
                 let mut mouse_buttons_hi = 0xFC;
                 if self.mouse_switches.right_button {
                     mouse_buttons_hi &= !0x04;
@@ -563,14 +581,14 @@ impl Controller {
               0-7   Horizontal Motion (-80h..+7Fh = Left..Right) (00h=No motion)
               8-15  Vertical Motion   (-80h..+7Fh = Up..Down)    (00h=No motion)
              */
-            ControllerState::MouseMovementLo => {
-                self.state = ControllerState::MouseMovementHi;
+            ControllerStateMachine::MouseMovementLo => {
+                self.state = ControllerStateMachine::MouseMovementHi;
                 let x_motion = self.mouse_switches.dx_motion;
                 self.mouse_switches.dx_motion = 0;
                 x_motion as u8
             }
-            ControllerState::MouseMovementHi => {
-                self.state = ControllerState::Init;
+            ControllerStateMachine::MouseMovementHi => {
+                self.state = ControllerStateMachine::Init;
                 let y_motion = self.mouse_switches.dy_motion;
                 self.mouse_switches.dy_motion = 0;
                 y_motion as u8
@@ -579,5 +597,39 @@ impl Controller {
         };
 
         byte
+    }
+}
+
+impl SnapshotAware for Controller {
+    type State = ControllerState;
+
+    fn snapshot(&self) -> ControllerState {
+        ControllerState {
+            id: self.id,
+            controller_type: self.controller_type,
+            digital_switches: self.digital_switches,
+            analog_switches: self.analog_switches,
+            mouse_switches: self.mouse_switches.clone(),
+            state: self.state.clone(),
+            connected: self.connected,
+            memory_card: self.memory_card.snapshot(),
+            memory_card_selected: self.memory_card_selected,
+            memory_card_sector: self.memory_card_sector,
+            last_cmd: self.last_cmd,
+            write_checksum: self.write_checksum,
+        }
+    }
+
+    fn restore(&mut self, snapshot: ControllerState) {
+        self.id = snapshot.id;
+        self.controller_type = snapshot.controller_type;
+        self.digital_switches = snapshot.digital_switches;
+        self.analog_switches = snapshot.analog_switches;
+        self.mouse_switches = snapshot.mouse_switches;
+        self.state = snapshot.state;
+        self.connected = snapshot.connected;
+        self.memory_card.restore(snapshot.memory_card);
+        self.last_cmd = snapshot.last_cmd;
+        self.write_checksum = snapshot.write_checksum;
     }
 }

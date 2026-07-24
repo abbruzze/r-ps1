@@ -1,9 +1,10 @@
 use crate::core::config::Config;
-use crate::core::cpu::cop2::Cop2;
+use crate::core::cpu::cop2::{Cop2, Cop2State};
 use crate::core::cpu::instruction::{Instruction, Opcode};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, MemoryMap, MemorySection, ReadMemoryAccess, WriteMemoryAccess};
-use crate::core::{memory, Resettable};
+use crate::core::snapshot::SnapshotAware;
+use crate::core::{Resettable, memory};
 use std::mem;
 use tracing::{debug, error, info};
 
@@ -76,7 +77,7 @@ pub trait Coprocessor {
 /*******************************************************************
                         I-CACHE
 *******************************************************************/
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
 struct CacheLine {
     valid: bool,
     tag: u32, // [31:12]
@@ -97,7 +98,9 @@ impl CacheLine {
     }
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ICache {
+    #[serde(with = "serde_arrays")]
     lines: [CacheLine;256],
     cache_miss: usize,
     requests: usize,
@@ -203,6 +206,7 @@ Reading from a kuseg/kseg0 address that has a pending write in the write queue w
 to guarantee that the CPU does not read stale data.
 Additionally, reading from any uncached address (i.e. kseg1) will stall the CPU until the entire write queue is flushed.
 *******************************************************************/
+#[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
 struct WriteQueue {
     queue: [(u32, u32, usize); 4],  // Array fisso
     head: usize,
@@ -324,6 +328,91 @@ pub struct Cpu {
     last_opcode: u32,
     cop2_remaining_cycles: usize,
     write_queue_enabled: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct CpuState {
+    cop2: Cop2State,
+    i_cache: ICache,
+    write_queue: WriteQueue,
+    pc: u32,
+    regs: [u32; 32],
+    hi: u32,
+    lo: u32,
+    delayed_load: (usize, u32),
+    delayed_load_next: (usize, u32),
+    branch_address: u32,
+    branch_taken: bool,
+    in_branch_delay_slot: bool,
+    mul_div_pending_cycles: usize,
+    op_cycles: usize,
+    write_queue_elapsed: usize,
+    bios_tty_capture_enabled: bool,
+    bios_tty_buffer: String,
+    last_mem_read_address: Option<u32>,
+    last_mem_write_address: Option<u32>,
+    last_mem_rw_value: u32,
+    last_opcode: u32,
+    cop2_remaining_cycles: usize,
+    write_queue_enabled: bool,
+}
+
+impl SnapshotAware for Cpu {
+    type State = CpuState;
+
+    fn snapshot(&self) -> CpuState {
+        CpuState {
+            cop2: self.cop2.snapshot(),
+            i_cache: self.i_cache.clone(),
+            write_queue: self.write_queue,
+            pc: self.pc,
+            regs: self.regs,
+            hi: self.hi,
+            lo: self.lo,
+            delayed_load: self.delayed_load,
+            delayed_load_next: self.delayed_load_next,
+            branch_address: self.branch_address,
+            branch_taken: self.branch_taken,
+            in_branch_delay_slot: self.in_branch_delay_slot,
+            mul_div_pending_cycles: self.mul_div_pending_cycles,
+            op_cycles: self.op_cycles,
+            write_queue_elapsed: self.write_queue_elapsed,
+            bios_tty_capture_enabled: self.bios_tty_capture_enabled,
+            bios_tty_buffer: self.bios_tty_buffer.clone(),
+            last_mem_read_address: self.last_mem_read_address,
+            last_mem_write_address: self.last_mem_write_address,
+            last_mem_rw_value: self.last_mem_rw_value,
+            last_opcode: self.last_opcode,
+            cop2_remaining_cycles: self.cop2_remaining_cycles,
+            write_queue_enabled: self.write_queue_enabled,
+        }
+    }
+
+    fn restore(&mut self, state: CpuState) {
+        self.cop2.restore(state.cop2);
+        self.i_cache = state.i_cache;
+        self.write_queue = state.write_queue;
+        self.pc = state.pc;
+        self.regs = state.regs;
+        self.hi = state.hi;
+        self.lo = state.lo;
+        self.delayed_load = state.delayed_load;
+        self.delayed_load_next = state.delayed_load_next;
+        self.branch_address = state.branch_address;
+        self.branch_taken = state.branch_taken;
+        self.in_branch_delay_slot = state.in_branch_delay_slot;
+        self.mul_div_pending_cycles = state.mul_div_pending_cycles;
+        self.op_cycles = state.op_cycles;
+        self.write_queue_elapsed = state.write_queue_elapsed;
+        self.bios_tty_capture_enabled = state.bios_tty_capture_enabled;
+        self.bios_tty_buffer = state.bios_tty_buffer;
+        self.last_mem_read_address = state.last_mem_read_address;
+        self.last_mem_write_address = state.last_mem_write_address;
+        self.last_mem_rw_value = state.last_mem_rw_value;
+        self.last_opcode = state.last_opcode;
+        self.cop2_remaining_cycles = state.cop2_remaining_cycles;
+        self.write_queue_enabled = state.write_queue_enabled;
+    }
 }
 
 impl Resettable for Cpu {

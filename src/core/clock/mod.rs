@@ -1,10 +1,12 @@
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 use crate::core::Resettable;
+use crate::core::snapshot::SnapshotAware;
 
 // Tipo di evento
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EventType {
     HBlankStart,
     HBlankEnd,
@@ -24,7 +26,7 @@ pub struct Event {
     pub over_cycles: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ClockEvent {
     pub event_type: EventType,
     pub timestamp: u64,
@@ -51,7 +53,7 @@ impl Ord for ClockEvent {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockConfig {
     pub cpu_hz: u64,
     pub gpu_hz: u64,
@@ -83,12 +85,37 @@ impl ClockConfig {
     }
 }
 
+impl SnapshotAware for Clock {
+    type State = ClockState;
+
+    fn snapshot(&self) -> Self::State {
+        ClockState {
+            events: self.events.clone().into_vec(),
+            current_time: self.current_time,
+            clock_config: self.clock_config.clone(),
+        }
+    }
+
+    fn restore(&mut self, state: Self::State) {
+        self.events = BinaryHeap::from(state.events);
+        self.current_time = state.current_time;
+        self.clock_config = state.clock_config;
+    }
+}
+
 impl Resettable for Clock {
     fn reset_component(&mut self, _hard_reset: bool) {
         self.events.clear();
         self.current_time = 0;
         info!("Clock reset done");
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClockState {
+    events: Vec<ClockEvent>,
+    current_time: u64,
+    clock_config: ClockConfig,
 }
 
 pub struct Clock {

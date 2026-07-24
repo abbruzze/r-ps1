@@ -2,6 +2,8 @@ use tracing::{debug, info, warn};
 use crate::core::cpu::CpuException;
 use crate::core::cpu::{Coprocessor, CopResult};
 use crate::core::Resettable;
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 
 pub static COP0_REGISTER_ALIASES: [ &str; 32 ] = [
     "$cop0_r0", "$cop0_r1", "$cop0_r2", "$cop0_bpc", "$cop0_r4", "$cop0_bda", "$cop0_jumpdest", "$cop0_dcic",
@@ -121,6 +123,28 @@ pub enum Cop0Reg {
 pub struct Cop0 {
     regs: [u32;32],
     pending_int_on_next_opcode: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Cop0State {
+    regs: [u32; 32],
+    pending_int_on_next_opcode: bool,
+}
+
+impl SnapshotAware for Cop0 {
+    type State = Cop0State;
+
+    fn snapshot(&self) -> Cop0State {
+        Cop0State {
+            regs: self.regs,
+            pending_int_on_next_opcode: self.pending_int_on_next_opcode,
+        }
+    }
+
+    fn restore(&mut self, state: Cop0State) {
+        self.regs = state.regs;
+        self.pending_int_on_next_opcode = state.pending_int_on_next_opcode;
+    }
 }
 
 impl Resettable for Cop0 {

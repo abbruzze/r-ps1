@@ -1,5 +1,7 @@
-use crate::core::cpu::{CopResult, Coprocessor};
 use crate::core::Resettable;
+use crate::core::cpu::{CopResult, Coprocessor};
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 use std::cmp;
 use tracing::{debug, error, info};
 
@@ -17,27 +19,27 @@ pub static COP2_DATA_REGISTER_ALIASES: [ &str; 32 ] = [
     "$cop2_mac0", "$cop2_mac1","$cop2_mac2", "$cop2_mac3","$cop2_irgb", "$cop2_orgb","$cop2_lzcs", "$cop2_lzcr",
 ];
 
-#[derive(Clone,Copy,Debug,Default)]
+#[derive(Serialize,Deserialize,Clone,Copy,Debug,Default)]
 struct Matrix3x3 {
     m11: i16, m12: i16, m13: i16,
     m21: i16, m22: i16, m23: i16,
     m31: i16, m32: i16, m33: i16,
 }
 
-#[derive(Clone,Copy,Debug,Default)]
+#[derive(Serialize,Deserialize,Clone,Copy,Debug,Default)]
 struct Vec2<T> {
     x: T,
     y: T,
 }
 
-#[derive(Clone,Copy,Debug,Default)]
+#[derive(Serialize,Deserialize,Clone,Copy,Debug,Default)]
 struct Vec3<T> {
     x: T,
     y: T,
     z: T,
 }
 
-#[derive(Clone,Copy,Debug,Default)]
+#[derive(Serialize,Deserialize,Clone,Copy,Debug,Default)]
 struct RGB {
     r: u8,
     g: u8,
@@ -185,6 +187,124 @@ pub struct Cop2 {
     mac: [i32; 4],
     lzcs: i32,
     lzcr: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Cop2State {
+    sf: usize,  // 19     sf - Shift Fraction in IR registers (0=No fraction, 1=12bit fraction)
+    mx: usize,  // 17-18  MVMVA Multiply Matrix    (0=Rotation. 1=Light, 2=Color, 3=Reserved)
+    sv: usize,  // 15-16  MVMVA Multiply Vector    (0=V0, 1=V1, 2=V2, 3=IR/long)
+    cv: usize,  // 13-14  MVMVA Translation Vector (0=TR, 1=BK, 2=FC/Bugged, 3=None)
+    lm: bool,   // 10     lm - Saturate IR1,IR2,IR3 result (0=To -8000h..+7FFFh, 1=To 0..+7FFFh)
+
+    // Control registers
+    rotation: Matrix3x3,
+    tr: Vec3<i32>,
+    light: Matrix3x3,
+    bk: Vec3<i32>,
+    colour: Matrix3x3,
+    fc: Vec3<i32>,
+    ofx: i32,
+    ofy: i32,
+    h: u16,
+    dqa: i16,
+    dqb: i32,
+    zsf3: i16,
+    zsf4: i16,
+    flags: u32,
+
+    // Data registers
+    v: [Vec3<i16>; 3],
+    rgb: RGB,
+    otz: u16,
+    ir: [i16; 4],
+    sxy_fifo: [Vec2<i16>; 3],
+    sz_fifo: [u16; 4],
+    rgb_fifo: [RGB; 3],
+    res1: u32,
+    mac: [i32; 4],
+    lzcs: i32,
+    lzcr: i32,
+}
+
+impl SnapshotAware for Cop2 {
+    type State = Cop2State;
+
+    fn snapshot(&self) -> Cop2State {
+        Cop2State {
+            sf: self.sf,
+            mx: self.mx,
+            sv: self.sv,
+            cv: self.cv,
+            lm: self.lm,
+
+            // Control registers
+            rotation: self.rotation.clone(),
+            tr: self.tr.clone(),
+            light: self.light.clone(),
+            bk: self.bk.clone(),
+            colour: self.colour.clone(),
+            fc: self.fc.clone(),
+            ofx: self.ofx,
+            ofy: self.ofy,
+            h: self.h,
+            dqa: self.dqa,
+            dqb: self.dqb,
+            zsf3: self.zsf3,
+            zsf4: self.zsf4,
+            flags: self.flags,
+
+            // Data registers
+            v: self.v.clone(),
+            rgb: self.rgb.clone(),
+            otz: self.otz,
+            ir: self.ir.clone(),
+            sxy_fifo: self.sxy_fifo.clone(),
+            sz_fifo: self.sz_fifo.clone(),
+            rgb_fifo: self.rgb_fifo.clone(),
+            res1: self.res1,
+            mac: self.mac.clone(),
+            lzcs: self.lzcs,
+            lzcr: self.lzcr,
+        }
+    }
+    fn restore(&mut self, state: Cop2State) {
+        self.sf = state.sf;
+        self.mx = state.mx;
+        self.sv = state.sv;
+        self.cv = state.cv;
+        self.lm = state.lm;
+
+        // Control registers
+        self.rotation = state.rotation;
+        self.tr = state.tr;
+        self.light = state.light;
+        self.bk = state.bk;
+        self.colour = state.colour;
+        self.fc = state.fc;
+        self.ofx = state.ofx;
+        self.ofy = state.ofy;
+        self.h = state.h;
+        self.dqa = state.dqa;
+        self.dqb = state.dqb;
+        self.zsf3 = state.zsf3;
+        self.zsf4 = state.zsf4;
+        self.flags = state.flags;
+
+        // Data registers
+        self.v = state.v;
+        self.rgb = state.rgb;
+        self.otz = state.otz;
+        self.ir = state.ir;
+        self.sxy_fifo = state.sxy_fifo;
+        self.sz_fifo = state.sz_fifo;
+        self.rgb_fifo = state.rgb_fifo;
+        self.res1 = state.res1;
+        self.mac = state.mac;
+        self.lzcs = state.lzcs;
+        self.lzcr = state.lzcr;
+
+    }
 }
 
 impl Coprocessor for Cop2 {

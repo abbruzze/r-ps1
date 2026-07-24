@@ -2,10 +2,33 @@ use crate::core::clock::Clock;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
+use crate::core::snapshot::SnapshotAware;
 use std::cell::RefCell;
 use std::rc::Rc;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use crate::core::Resettable;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DMAChannelState {
+    id: usize,
+    madr: u32,
+    madr_read: u32,
+    bcr: u32,
+    chcr: u32,
+    enabled: bool,
+    bus_error: bool,
+    sync_mode: SyncMode,
+    transfer_direction: TransferDirection,
+    remaining_words: u32,
+    remaining_blocks: u32,
+    waiting_next_block: bool,
+    chopping_window_words: usize,
+    chopping_window_cycles: usize,
+    linked_list_header: Option<(u32, u32)>,
+    header_in_a_row_count: usize,
+    cycles_per_word: usize,
+}
 
 pub trait DmaDevice {
     // true if device is ready for DMA transfer
@@ -34,7 +57,7 @@ impl DmaDevice for DummyDMAChannel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone,Serialize,Deserialize)]
 enum SyncMode {
     Manual,
     Slice,
@@ -57,7 +80,7 @@ impl SyncMode {
         }
     }
 }
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
 enum TransferDirection {
     DeviceToRAM,
     RAMToDevice,
@@ -72,14 +95,14 @@ impl TransferDirection {
         }
     }
 }
-
+#[derive(Debug,Serialize,Deserialize)]
 enum DMAResult {
     InProgress,
     LeaveBus,
     Finished,
     BlockFinished(bool,usize), // true = last block finished
 }
-
+#[derive(Debug,Serialize,Deserialize)]
 enum IrqDMAType {
     EntireTransferComplete,
     BlockComplete,
@@ -556,6 +579,114 @@ impl DMAChannel {
                 self.remaining_blocks = 0;
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DMAControllerState {
+    channels: [DMAChannelState; 7],
+    dpcr: u32,
+    dpcr_changed: bool,
+    chcr_changed: bool,
+    dcir: u32,
+    priorities: [(usize, usize, bool); 8],
+    irq_flags: u8,
+    reg_f8: u32,
+    reg_fc: u32,
+    dma_in_progress_on_channel: Option<usize>,
+    dma_enabled: bool,
+    dma_pending_cycles: usize,
+}
+
+impl SnapshotAware for DMAController {
+    type State = DMAControllerState;
+
+    fn snapshot(&self) -> DMAControllerState {
+        DMAControllerState {
+            channels: std::array::from_fn(|i| self.channels[i].snapshot()),
+            dpcr: self.dpcr,
+            dpcr_changed: self.dpcr_changed,
+            chcr_changed: self.chcr_changed,
+            dcir: self.dcir,
+            priorities: self.priorities,
+            irq_flags: self.irq_flags,
+            reg_f8: self.reg_f8,
+            reg_fc: self.reg_fc,
+            dma_in_progress_on_channel: self.dma_in_progress_on_channel,
+            dma_enabled: self.dma_enabled,
+            dma_pending_cycles: self.dma_pending_cycles,
+        }
+    }
+
+    fn restore(&mut self, state: DMAControllerState) {
+        for (i, ch_state) in state.channels.into_iter().enumerate() {
+            self.channels[i].restore(ch_state);
+        }
+        self.dpcr = state.dpcr;
+        self.dpcr_changed = state.dpcr_changed;
+        self.chcr_changed = state.chcr_changed;
+        self.dcir = state.dcir;
+        self.priorities = state.priorities;
+        self.irq_flags = state.irq_flags;
+        self.reg_f8 = state.reg_f8;
+        self.reg_fc = state.reg_fc;
+        self.dma_in_progress_on_channel = state.dma_in_progress_on_channel;
+        self.dma_enabled = state.dma_enabled;
+        self.dma_pending_cycles = state.dma_pending_cycles;
+    }
+}
+
+impl SnapshotAware for DMAChannel {
+    type State = DMAChannelState;
+
+    fn snapshot(&self) -> DMAChannelState {
+        DMAChannelState {
+            id: self.id,
+            madr: self.madr,
+            madr_read: self.madr_read,
+            bcr: self.bcr,
+            chcr: self.chcr,
+            enabled: self.enabled,
+            bus_error: self.bus_error,
+            sync_mode: match self.sync_mode {
+                SyncMode::Manual => SyncMode::Manual,
+                SyncMode::Slice => SyncMode::Slice,
+                SyncMode::LinkedList => SyncMode::LinkedList,
+                SyncMode::Reserved => SyncMode::Reserved,
+            },
+            transfer_direction: match self.transfer_direction {
+                TransferDirection::DeviceToRAM => TransferDirection::DeviceToRAM,
+                TransferDirection::RAMToDevice => TransferDirection::RAMToDevice,
+            },
+            remaining_words: self.remaining_words,
+            remaining_blocks: self.remaining_blocks,
+            waiting_next_block: self.waiting_next_block,
+            chopping_window_words: self.chopping_window_words,
+            chopping_window_cycles: self.chopping_window_cycles,
+            linked_list_header: self.linked_list_header,
+            header_in_a_row_count: self.header_in_a_row_count,
+            cycles_per_word: self.cycles_per_word,
+        }
+    }
+
+    fn restore(&mut self, state: DMAChannelState) {
+        self.id = state.id;
+        self.madr = state.madr;
+        self.madr_read = state.madr_read;
+        self.bcr = state.bcr;
+        self.chcr = state.chcr;
+        self.enabled = state.enabled;
+        self.bus_error = state.bus_error;
+        self.sync_mode = state.sync_mode;
+        self.transfer_direction = state.transfer_direction;
+        self.remaining_words = state.remaining_words;
+        self.remaining_blocks = state.remaining_blocks;
+        self.waiting_next_block = state.waiting_next_block;
+        self.chopping_window_words = state.chopping_window_words;
+        self.chopping_window_cycles = state.chopping_window_cycles;
+        self.linked_list_header = state.linked_list_header;
+        self.header_in_a_row_count = state.header_in_a_row_count;
+        self.cycles_per_word = state.cycles_per_word;
     }
 }
 /*
