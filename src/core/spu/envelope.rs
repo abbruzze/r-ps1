@@ -1,11 +1,12 @@
 //! Volume and envelope code
 
-use tracing::debug;
-use crate::core::spu::util;
-use util::{U16Ext,U32Ext};
 use crate::core::Resettable;
+use crate::core::spu::util;
+use serde::{Deserialize, Serialize};
+use tracing::debug;
+use util::{U16Ext, U32Ext};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 pub enum EnvelopeMode {
     #[default]
     Linear = 0,
@@ -18,7 +19,7 @@ impl EnvelopeMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 pub enum EnvelopeDirection {
     #[default]
     Increasing = 0,
@@ -31,7 +32,7 @@ impl EnvelopeDirection {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,Serialize,Deserialize)]
 pub enum SweepPhase {
     Positive = 0,
     Negative = 1,
@@ -43,7 +44,7 @@ impl SweepPhase {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 pub struct EnvelopeSettings {
     pub step: u8,
     pub shift: u8,
@@ -123,7 +124,7 @@ impl EnvelopeSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 pub enum SweepSetting {
     Fixed,
     Sweep(EnvelopeSettings),
@@ -153,7 +154,7 @@ impl SweepSetting {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 pub struct SweepEnvelope {
     pub volume: i16,
     pub setting: SweepSetting,
@@ -205,7 +206,7 @@ impl SweepEnvelope {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Copy,Serialize,Deserialize)]
 pub struct VolumeControl {
     pub main_l: SweepEnvelope,
     pub main_r: SweepEnvelope,
@@ -252,7 +253,7 @@ impl VolumeControl {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Copy,Serialize,Deserialize)]
 pub struct AdsrSettings {
     pub attack_step: u8,
     pub attack_shift: u8,
@@ -329,7 +330,7 @@ fn reverse_sustain_level(value: u16) -> u32 {
     (u32::from(value) >> 11) - 1
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 pub enum AdsrPhase {
     Attack,
     Decay,
@@ -338,7 +339,7 @@ pub enum AdsrPhase {
     Release,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Copy,Serialize,Deserialize)]
 pub struct AdsrEnvelope {
     pub level: i16,
     pub settings: AdsrSettings,

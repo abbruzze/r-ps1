@@ -1,11 +1,12 @@
-use std::cmp;
-use tracing::{debug, info};
 use crate::core::Resettable;
 use crate::core::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
-use crate::core::spu::{adpcm, interpolate, multiply_volume, AdpcmInterpolation, SoundRam, SOUND_RAM_MASK};
 use crate::core::spu::envelope::{AdsrEnvelope, AdsrPhase, SweepEnvelope};
+use crate::core::spu::{AdpcmInterpolation, SOUND_RAM_MASK, SoundRam, adpcm, interpolate, multiply_volume};
+use serde::{Deserialize, Serialize};
+use std::cmp;
+use tracing::{debug, info};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Copy,Serialize,Deserialize)]
 pub struct Voice {
     voice_number: usize,
     pub adpcm_interpolation: AdpcmInterpolation,

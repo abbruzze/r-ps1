@@ -1,7 +1,8 @@
 use crate::core::spu::util::I16Ext;
+use serde::{Deserialize, Serialize};
 use std::cmp;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize,Deserialize)]
 pub struct NoiseGenerator {
     pub output: i16,
     pub step: u8,

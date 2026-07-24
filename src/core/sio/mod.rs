@@ -1,8 +1,10 @@
 use crate::core::clock::{Clock, EventType};
 use crate::core::config::Config;
-use crate::core::controllers::Controller;
+use crate::core::controllers::{Controller, ControllerState};
 use crate::core::interrupt::{InterruptType, IrqHandler};
-use crate::core::{Resettable, CPU_CLOCK};
+use crate::core::snapshot::SnapshotAware;
+use crate::core::{CPU_CLOCK, Resettable};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use tracing::{debug, info, warn};
 
@@ -38,6 +40,62 @@ pub struct SIO0 {
     ack_asserted: bool,
     timer_target_timestamp: u64,
     response_cycles: Option<u64>,
+}
+
+#[derive(Serialize,Deserialize)]
+pub struct SIO0State {
+    baud: u16,
+    mode: u16,
+    controllers_state: [ControllerState;2],
+    selected_device: Option<u8>,
+    irq: bool,
+    ctrl: u16,
+    tx_data: VecDeque<(u8,u8)>, // data, device
+    rx_fifo: VecDeque<u8>,
+    tx_idle:bool,
+    ack_asserted: bool,
+    timer_target_timestamp: u64,
+    response_cycles: Option<u64>,
+}
+
+impl SnapshotAware for SIO0 {
+    type State = SIO0State;
+
+    fn snapshot(&self) -> SIO0State {
+        SIO0State {
+            baud: self.baud,
+            mode: self.mode,
+            controllers_state: [
+                self.controllers[0].snapshot(),
+                self.controllers[1].snapshot()
+            ],
+            selected_device: self.selected_device,
+            irq: self.irq,
+            ctrl: self.ctrl,
+            tx_data: self.tx_data.clone(),
+            rx_fifo: self.rx_fifo.clone(),
+            tx_idle: self.tx_idle,
+            ack_asserted: self.ack_asserted,
+            timer_target_timestamp: self.timer_target_timestamp,
+            response_cycles: self.response_cycles,
+        }
+    }
+
+    fn restore(&mut self, state: SIO0State) {
+        self.baud = state.baud;
+        self.mode = state.mode;
+        self.controllers[0].restore(state.controllers_state[0].clone());
+        self.controllers[1].restore(state.controllers_state[1].clone());
+        self.selected_device = state.selected_device;
+        self.irq = state.irq;
+        self.ctrl = state.ctrl;
+        self.tx_data = state.tx_data;
+        self.rx_fifo = state.rx_fifo;
+        self.tx_idle = state.tx_idle;
+        self.ack_asserted = state.ack_asserted;
+        self.timer_target_timestamp = state.timer_target_timestamp;
+        self.response_cycles = state.response_cycles;
+    }
 }
 
 impl Resettable for SIO0 {

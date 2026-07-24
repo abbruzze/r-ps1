@@ -2,15 +2,17 @@
 //!
 //! Implementation largely based on <https://psx-spx.consoledev.net/macroblockdecodermdec/>
 
+use crate::core::Resettable;
+use crate::core::clock::Clock;
+use crate::core::dma::DmaDevice;
+use crate::core::interrupt::IrqHandler;
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::mem;
 use std::rc::Rc;
 use tracing::debug;
-use crate::core::clock::Clock;
-use crate::core::dma::DmaDevice;
-use crate::core::interrupt::IrqHandler;
-use crate::core::Resettable;
 /*
 pub const ZIG_ZAG: &[u8; 64] = &[
     0, 1, 5, 6, 14, 15, 27, 28, 2, 4, 7, 13, 16, 26, 29, 42, 3, 8, 12, 17, 25, 30, 41, 43, 9, 11,
@@ -27,7 +29,7 @@ pub const ZAG_ZIG: &[u8; 64] = &[
     52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 enum DepthBits {
     #[default]
     Four = 0,
@@ -48,7 +50,7 @@ impl DepthBits {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Copy,Serialize,Deserialize)]
 struct DecodeConfig {
     depth: DepthBits,
     signed: bool,
@@ -73,7 +75,7 @@ impl DecodeConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 enum CommandState {
     Idle,
     ReceivingCompressedData,
@@ -82,20 +84,26 @@ enum CommandState {
     ReceivingScaleTable { halfwords_remaining: u8 },
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default,Serialize,Deserialize)]
 struct Color {
     r: i16,
     g: i16,
     b: i16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize,Deserialize)]
 struct Buffers {
+    #[serde(with = "serde_arrays")]
     cr_block: [i32; 64],
+    #[serde(with = "serde_arrays")]
     cb_block: [i32; 64],
+    #[serde(with = "serde_arrays")]
     y_block: [i32; 64],
+    #[serde(with = "serde_arrays")]
     idct_buffer: [i32; 64],
+    #[serde(with = "serde_arrays")]
     color_out_buffer: [Color; 256],
+    #[serde(with = "serde_arrays")]
     mono_out_buffer: [u8; 64],
 }
 
@@ -172,6 +180,55 @@ pub struct MDec {
     color_quant_table: [u8; 64],
     scale_table: [i16; 64],
     buffers: Box<Buffers>,
+}
+
+#[derive(Debug, Clone,Serialize,Deserialize)]
+pub struct MDecState {
+    command_state: CommandState,
+    decode_config: DecodeConfig,
+    data_in: VecDeque<u16>,
+    data_out: VecDeque<u8>,
+    enable_data_in: bool,
+    enable_data_out: bool,
+    #[serde(with = "serde_arrays")]
+    luminance_quant_table: [u8; 64],
+    #[serde(with = "serde_arrays")]
+    color_quant_table: [u8; 64],
+    #[serde(with = "serde_arrays")]
+    scale_table: [i16; 64],
+    buffers: Box<Buffers>,
+}
+
+impl SnapshotAware for MDec {
+    type State = MDecState;
+
+    fn snapshot(&self) -> MDecState {
+        MDecState {
+            command_state: self.command_state,
+            decode_config: self.decode_config,
+            data_in: self.data_in.clone(),
+            data_out: self.data_out.clone(),
+            enable_data_in: self.enable_data_in,
+            enable_data_out: self.enable_data_out,
+            luminance_quant_table: self.luminance_quant_table,
+            color_quant_table: self.color_quant_table,
+            scale_table: self.scale_table,
+            buffers: self.buffers.clone(),
+        }
+    }
+
+    fn restore(&mut self, state: MDecState) {
+        self.command_state = state.command_state;
+        self.decode_config = state.decode_config;
+        self.data_in = state.data_in;
+        self.data_out = state.data_out;
+        self.enable_data_in = state.enable_data_in;
+        self.enable_data_out = state.enable_data_out;
+        self.luminance_quant_table = state.luminance_quant_table;
+        self.color_quant_table = state.color_quant_table;
+        self.scale_table = state.scale_table;
+        self.buffers = state.buffers;
+    }
 }
 
 impl Resettable for MDec {

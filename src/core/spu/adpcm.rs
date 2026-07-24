@@ -5,10 +5,11 @@
 //! The block begins with a 2-byte header specifying the ADPCM shift value, the ADPCM filter value,
 //! and loop flags. The remaining 14 bytes contain 4-bit ADPCM sample values.
 
-use tracing::debug;
 use crate::core::spu::util::I32Ext;
+use serde::{Deserialize, Serialize};
+use tracing::debug;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default,Serialize,Deserialize)]
 pub struct AdpcmHeader {
     pub shift: u8,
     pub filter: u8,
@@ -35,7 +36,7 @@ impl AdpcmHeader {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Copy,Serialize,Deserialize)]
 pub struct SpuAdpcmBuffer {
     pub header: AdpcmHeader,
     samples: [i16; 32],

@@ -1,10 +1,11 @@
-use std::collections::VecDeque;
-use crate::core::spu::{multiply_volume, multiply_volume_i32, SoundRam, NUM_VOICES, SOUND_RAM_LEN, SOUND_RAM_MASK};
-use std::cmp;
-use tracing::debug;
+use super::util::{I32Ext, U32Ext};
 use crate::core::Resettable;
 use crate::core::spu::voice::Voice;
-use super::util::{I32Ext, U32Ext};
+use crate::core::spu::{NUM_VOICES, SOUND_RAM_LEN, SOUND_RAM_MASK, SoundRam, multiply_volume, multiply_volume_i32};
+use serde::{Deserialize, Serialize};
+use std::cmp;
+use std::collections::VecDeque;
+use tracing::debug;
 
 // From <https://psx-spx.consoledev.net/soundprocessingunitspu/#reverb-buffer-resampling>
 const FILTER: &[i32; 39] = &[
@@ -14,7 +15,7 @@ const FILTER: &[i32; 39] = &[
     0x0000, -0x000A, 0x0000, 0x0002, 0x0000, -0x0001,
 ];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize,Deserialize)]
 pub struct FirSampleDeque(VecDeque<i32>);
 
 impl FirSampleDeque {
@@ -45,7 +46,7 @@ pub fn fir_filter(samples: &FirSampleDeque) -> i32 {
         .sum()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 enum ReverbClock {
     #[default]
     Left,
@@ -62,7 +63,7 @@ impl ReverbClock {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default,Serialize,Deserialize)]
 struct StereoValue<T> {
     l: T,
     r: T,
@@ -81,7 +82,7 @@ type StereoI16 = StereoValue<i16>;
 type StereoI32 = StereoValue<i32>;
 type StereoU32 = StereoValue<u32>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize,Deserialize)]
 pub struct ReverbUnit {
     pub writes_enabled: bool,
     pub cd_enabled: bool,

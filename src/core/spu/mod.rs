@@ -1,15 +1,17 @@
 // Thanks to https://github.com/jsgroth/CoffeePSX
 
+use crate::core::Resettable;
 use crate::core::cdrom::CDRom;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
+use crate::core::snapshot::SnapshotAware;
 use crate::core::spu::envelope::VolumeControl;
 use crate::core::spu::noise::NoiseGenerator;
 use crate::core::spu::reverb::ReverbUnit;
 use crate::core::spu::util::{I32Ext, U32Ext};
 use crate::core::spu::voice::Voice;
-use crate::core::Resettable;
+use serde::{Deserialize, Serialize};
 use std::array;
 use std::cell::Cell;
 use std::ops::{Index, IndexMut, Range};
@@ -28,16 +30,16 @@ const SOUND_RAM_MASK: u32 = (SOUND_RAM_LEN - 1) as u32;
 
 const NUM_VOICES: usize = 24;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 pub enum AdpcmInterpolation {
     #[default]
     Gaussian,
     Hermite,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize,Deserialize)]
 struct SoundRam {
-    ram: Box<[u8;SOUND_RAM_LEN]>,
+    ram: Vec<u8>,
     irq_enabled: bool,
     irq_address: usize,
     irq: Cell<bool>,
@@ -46,7 +48,7 @@ struct SoundRam {
 impl SoundRam {
     fn new() -> Self {
         Self {
-            ram: Box::new([0;SOUND_RAM_LEN]),
+            ram: vec![0u8; SOUND_RAM_LEN],
             irq_enabled: false,
             irq_address: 0,
             irq: Cell::new(false),
@@ -120,7 +122,7 @@ impl IndexMut<usize> for SoundRam {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,Serialize,Deserialize)]
 enum DataPortMode {
     #[default]
     Off = 0,
@@ -145,7 +147,7 @@ impl DataPortMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 struct DataPort {
     mode: DataPortMode,
     start_address: u32,
@@ -180,7 +182,7 @@ impl DataPort {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 struct ControlRegisters {
     soft_reset: bool,
     amplifier_enabled: bool,
@@ -310,6 +312,49 @@ pub struct Spu {
     noise: NoiseGenerator,
     last_irq_bit: bool,
     capture_buffer_addr: u32,
+}
+
+#[derive(Debug, Clone,Serialize,Deserialize)]
+pub struct SpuState {
+    sound_ram: SoundRam,
+    voices: [Voice; NUM_VOICES],
+    control: ControlRegisters,
+    volume: VolumeControl,
+    data_port: DataPort,
+    reverb: ReverbUnit,
+    noise: NoiseGenerator,
+    last_irq_bit: bool,
+    capture_buffer_addr: u32,
+}
+
+impl SnapshotAware for Spu {
+    type State = SpuState;
+
+    fn snapshot(&self) -> SpuState {
+        SpuState {
+            sound_ram: self.sound_ram.clone(),
+            voices: self.voices,
+            control: self.control,
+            volume: self.volume.clone(),
+            data_port: self.data_port,
+            reverb: self.reverb.clone(),
+            noise: self.noise.clone(),
+            last_irq_bit: self.last_irq_bit,
+            capture_buffer_addr: self.capture_buffer_addr,
+        }
+    }
+
+    fn restore(&mut self, state: SpuState) {
+        self.sound_ram = state.sound_ram;
+        self.voices.copy_from_slice(&state.voices);
+        self.control = state.control;
+        self.volume = state.volume;
+        self.data_port = state.data_port;
+        self.reverb = state.reverb;
+        self.noise = state.noise;
+        self.last_irq_bit = state.last_irq_bit;
+        self.capture_buffer_addr = state.capture_buffer_addr;
+    }
 }
 
 impl Resettable for Spu {
