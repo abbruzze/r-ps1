@@ -15,6 +15,8 @@
   16-31 Garbage
  */
 use crate::core::Resettable;
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 
 pub trait InterruptController {
     fn raise_hw_interrupts(&mut self,irqs:u16);
@@ -38,6 +40,28 @@ pub enum InterruptType {
 pub struct IrqHandler {
     irqs: u16,
     changed: bool,
+}
+
+#[derive(Debug,Copy,Clone,Serialize,Deserialize)]
+pub struct IrqHandlerState {
+    irqs: u16,
+    changed: bool,
+}
+
+impl SnapshotAware for IrqHandler {
+    type State = IrqHandlerState;
+
+    fn snapshot(&self) -> IrqHandlerState {
+        IrqHandlerState {
+            irqs: self.irqs,
+            changed: self.changed,
+        }
+    }
+
+    fn restore(&mut self, state: IrqHandlerState) {
+        self.irqs = state.irqs;
+        self.changed = state.changed;
+    }
 }
 
 impl Resettable for IrqHandler {

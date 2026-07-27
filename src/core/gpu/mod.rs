@@ -5,14 +5,16 @@ mod draw_rectangle;
 mod draw_polygon;
 mod timings;
 
+use crate::core::Resettable;
 use crate::core::clock::Clock;
 use crate::core::clock::EventType;
 use crate::core::config::Config;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
-use crate::core::Resettable;
+use crate::core::snapshot::SnapshotAware;
 use crate::renderer::{GPUFrameBuffer, Renderer};
+use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::sync::Arc;
 use tracing::info;
@@ -55,7 +57,7 @@ const fn generate_rgb5_to_rgb8_table() -> [u8; 32] {
 
 static RGB5_TO_RGB8: [u8; 32] = generate_rgb5_to_rgb8_table();
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy,Serialize,Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -141,7 +143,7 @@ impl Color {
     }
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 enum TextureDepth {
     // 4 bits per pixel
     T4Bit,
@@ -159,7 +161,7 @@ impl Default for TextureDepth {
     }
 }
 
-#[derive(Default,Debug)]
+#[derive(Default,Debug,Copy,Clone,Serialize,Deserialize)]
 struct Texture {
     /// Texture page base X coordinate (4 bits, 64 byte increment)
     page_base_x: u8,
@@ -181,7 +183,7 @@ struct Texture {
     window_y_offset: u8,
 }
 
-#[derive(Default,Debug)]
+#[derive(Default,Debug,Copy,Clone,Serialize,Deserialize)]
 struct DrawingArea {
     /// Allow drawing to the display area
     draw_to_display: bool,
@@ -205,7 +207,7 @@ impl DrawingArea {
     }
 }
 
-#[derive(Default,Debug)]
+#[derive(Default,Debug,Copy,Clone,Serialize,Deserialize)]
 struct DisplayConfig {
     /// First column of the display area in VRAM
     vram_x_start: u16,
@@ -248,7 +250,7 @@ impl DisplayConfig {
     }
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 struct VideoHorizontalResolution(usize);
 
 impl VideoHorizontalResolution {
@@ -318,7 +320,7 @@ impl Default for VideoHorizontalResolution {
     }
 }
 
-#[derive(Copy,Clone,PartialEq,Debug)]
+#[derive(Copy,Clone,PartialEq,Debug,Serialize,Deserialize)]
 enum InterlaceField {
     Even,
     Odd
@@ -330,7 +332,7 @@ impl Default for InterlaceField {
     }
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 enum VideoVerticalResolution {
     Y240Lines,
     Y480Lines,
@@ -351,7 +353,7 @@ impl VideoVerticalResolution {
     }
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 pub enum VideoMode {
     Ntsc,
     Pal
@@ -401,7 +403,7 @@ impl Default for VideoMode {
     }
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 enum DisplayDepth {
     /// 15 bits per pixel
     D15Bits,
@@ -415,7 +417,7 @@ impl Default for DisplayDepth {
     }
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 enum DMADirection {
     Off,
     Fifo,
@@ -429,14 +431,14 @@ impl Default for DMADirection {
     }
 }
 
-#[derive(Default)]
+#[derive(Default,Copy,Clone,Serialize,Deserialize)]
 struct ReadyBits {
     ready_to_receive_cmd_word: bool, // 26
     ready_to_send_vram_to_cpu: bool, // 27
     ready_to_receive_dma_block: bool, // 28
 }
 
-#[derive(Debug,Clone,Copy,Default)]
+#[derive(Debug,Clone,Copy,Default,Serialize,Deserialize)]
 enum SemiTransparency {
     #[default]
     Average,
@@ -502,7 +504,7 @@ impl SemiTransparency {
     }
 }
 
-#[derive(Default,Debug)]
+#[derive(Default,Debug,Copy,Clone,Serialize,Deserialize)]
 pub struct CommandFifo {
     buf: [u32; 16],
     head: u8,
@@ -573,7 +575,7 @@ impl CommandFifo {
     }
 }
 
-#[derive(Default)]
+#[derive(Default,Copy,Clone,Serialize,Deserialize)]
 struct Raster {
     total_lines: usize,
     total_cycles: usize,
@@ -584,7 +586,7 @@ struct Raster {
 
 type GP0Operation = fn(&mut GPU,u32,&mut IrqHandler) -> usize;
 
-#[derive(Debug,Default,Clone,Copy)]
+#[derive(Debug,Default,Clone,Copy,Serialize,Deserialize)]
 struct VRamCopyConfig {
     coord_x: u16,
     coord_y: u16,
@@ -636,7 +638,7 @@ Vertex (Parameter for Polygon, Line, Rectangle commands)
 Size Restriction: The maximum distance between two vertices is 1023 horizontally, and 511 vertically. Polygons and lines that are exceeding that dimensions are NOT rendered. For example, a line from Y1=-300 to Y2=+300 is NOT rendered, a line from Y1=-100 to Y2=+400 is rendered (as far as it is within the drawing area).
 If portions of the polygon/line/rectangle are located outside of the drawing area, then the hardware renders only the portion that is inside of the drawing area.
  */
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug,Copy,Clone,Serialize,Deserialize)]
 struct Vertex {
     pub x: i16,
     pub y: i16,
@@ -695,6 +697,76 @@ pub struct GPU {
     last_cpu_perf: u16,
     cpu_vram_copy_buffer: Vec<u16>,
     command_delay_enabled: bool,
+}
+
+#[derive(Clone,Serialize,Deserialize)]
+//GPU state does not contain GP0 state: the emulator's snapshot must be synchronized with GPU to wait until the current command is finished
+pub struct GPUState {
+    vram: Vec<u8>, // little endian format
+    cmd_fifo: CommandFifo,
+    gp0_fifo: CommandFifo,
+    texture: Texture,
+    semi_transparency: SemiTransparency,
+    /// Enable dithering from 24 to 15bits RGB
+    dithering: bool,
+    /// Force "mask" bit of the pixel to 1 when writing to VRAM (otherwise don't modify it)
+    force_set_mask_bit: bool,
+    /// Don't draw to pixels which have the "mask" bit set
+    preserve_masked_pixels: bool,
+    drawing_area: DrawingArea,
+    display_config: DisplayConfig,
+    reverse_flag: bool,
+    /// True when the interrupt is active
+    irq: bool,
+    dma_direction: DMADirection,
+    ready_bits: ReadyBits,
+    raster: Raster,
+    gpu_read_register: u32,
+}
+
+impl SnapshotAware for GPU {
+    type State = GPUState;
+
+    fn snapshot(&self) -> Self::State {
+        GPUState {
+            vram: self.vram.clone(),
+            cmd_fifo: self.cmd_fifo,
+            gp0_fifo: self.gp0_fifo,
+            texture: self.texture,
+            semi_transparency: self.semi_transparency,
+            dithering: self.dithering,
+            force_set_mask_bit: self.force_set_mask_bit,
+            preserve_masked_pixels: self.preserve_masked_pixels,
+            drawing_area: self.drawing_area,
+            display_config: self.display_config,
+            reverse_flag: self.reverse_flag,
+            irq: self.irq,
+            dma_direction: self.dma_direction,
+            ready_bits: self.ready_bits,
+            raster: self.raster,
+            gpu_read_register: self.gpu_read_register,
+        }
+    }
+
+    fn restore(&mut self, state: Self::State) {
+        self.vram = state.vram;
+        self.cmd_fifo = state.cmd_fifo;
+        self.gp0_fifo = state.gp0_fifo;
+        self.texture = state.texture;
+        self.semi_transparency = state.semi_transparency;
+        self.dithering = state.dithering;
+        self.force_set_mask_bit = state.force_set_mask_bit;
+        self.preserve_masked_pixels = state.preserve_masked_pixels;
+        self.drawing_area = state.drawing_area;
+        self.display_config = state.display_config;
+        self.reverse_flag = state.reverse_flag;
+        self.irq = state.irq;
+        self.dma_direction = state.dma_direction;
+        self.ready_bits = state.ready_bits;
+        self.raster = state.raster;
+        self.gpu_read_register = state.gpu_read_register;
+        self.gp0state = Gp0State::WaitingCommand;
+    }
 }
 
 impl Resettable for GPU {
@@ -771,6 +843,10 @@ impl GPU {
         gpu.init_gp1_commands();
         
         gpu
+    }
+
+    pub fn is_waiting_command(&self) -> bool {
+        matches!(self.gp0state, Gp0State::WaitingCommand)
     }
 
     pub fn set_video_mode(&mut self,video_mode:VideoMode) {

@@ -5,13 +5,15 @@ mod commands;
 mod read_sector;
 mod xaadpcm;
 
+use crate::core::Resettable;
 use crate::core::cdrom::commands::INT5;
 use crate::core::cdrom::disc::{AudioLeftRight, Disc, DiscTime, TrackSectorDataSize};
 use crate::core::cdrom::xaadpcm::XaAdpcmState;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
 use crate::core::interrupt::{InterruptType, IrqHandler};
-use crate::core::Resettable;
+use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use tracing::{debug, info, warn};
@@ -77,7 +79,7 @@ impl Region {
         }
     }
 }
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug,Copy,Clone,Serialize,Deserialize)]
 enum Command {
     Nop,
     Setloc,
@@ -144,7 +146,7 @@ impl Command {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize,Deserialize)]
 enum CommandState {
     Idle,
     WaitingIrqAck(u8),
@@ -153,7 +155,7 @@ enum CommandState {
     Delay { cmd: Command, delay_cycles: usize, next_state: Box<CommandState> },
     Response2 { cmd: Command },
 }
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize,Deserialize)]
 enum DriveState {
     Idle,
     Playing { first_sector_cycles: usize, sample_index:usize, report_counter:usize, report_absolute: bool, seeking_cycles: usize },
@@ -184,7 +186,7 @@ pub enum CDOperation {
     Idle,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone,Serialize,Deserialize)]
 struct PendingIrq {
     cmd: Command,
     irq: u8,
@@ -219,6 +221,86 @@ pub struct CDRom {
     changing_disk_cycles: usize,
     pending_disc: Option<Disc>,
     pending_irq: Option<PendingIrq>,
+}
+
+#[derive(Serialize, Deserialize)]
+// in the CDRom state is not stored the Disc information: it's in charge of the emulator's main snapshot procedure
+pub struct CDRomState {
+    drive_state: DriveState,
+    bank_address: usize,
+    hintmsk_reg: u8,
+    hintsts_reg: u8,
+    hchpctl: u8,
+    parameter_fifo: VecDeque<u8>,
+    result_fifo: VecDeque<u8>,
+    data_buffer: VecDeque<u8>,
+    last_sector_header: Vec<u8>,
+    last_audio_sector: Vec<AudioLeftRight>,
+    cd_to_spu_volume: [[u8; 2]; 2],
+    pending_cd_to_spu_volume: [[u8; 2]; 2],
+    audio_sample: AudioLeftRight,
+    command_state: CommandState,
+    shell_once_opened: bool,
+    send_int5_shell_opened: bool,
+    motor_on: bool,
+    pending_setloc: Option<DiscTime>,
+    mode: u8,
+    adpcm: XaAdpcmState,
+    pending_irq: Option<PendingIrq>,
+}
+
+impl SnapshotAware for CDRom {
+    type State = CDRomState;
+
+    fn snapshot(&self) -> CDRomState {
+        CDRomState {
+            drive_state: self.drive_state.clone(),
+            bank_address: self.bank_address,
+            hintmsk_reg: self.hintmsk_reg,
+            hintsts_reg: self.hintsts_reg,
+            hchpctl: self.hchpctl,
+            parameter_fifo: self.parameter_fifo.clone(),
+            result_fifo: self.result_fifo.clone(),
+            data_buffer: self.data_buffer.clone(),
+            last_sector_header: self.last_sector_header.clone(),
+            last_audio_sector: self.last_audio_sector.clone(),
+            cd_to_spu_volume: self.cd_to_spu_volume,
+            pending_cd_to_spu_volume: self.pending_cd_to_spu_volume,
+            audio_sample: self.audio_sample.clone(),
+            command_state: self.command_state.clone(),
+            shell_once_opened: self.shell_once_opened,
+            send_int5_shell_opened: self.send_int5_shell_opened,
+            motor_on: self.motor_on,
+            pending_setloc: self.pending_setloc,
+            mode: self.mode,
+            adpcm: self.adpcm.clone(),
+            pending_irq: self.pending_irq.clone(),
+        }
+    }
+
+    fn restore(&mut self, state: CDRomState) {
+        self.drive_state = state.drive_state;
+        self.bank_address = state.bank_address;
+        self.hintmsk_reg = state.hintmsk_reg;
+        self.hintsts_reg = state.hintsts_reg;
+        self.hchpctl = state.hchpctl;
+        self.parameter_fifo = state.parameter_fifo;
+        self.result_fifo = state.result_fifo;
+        self.data_buffer = state.data_buffer;
+        self.last_sector_header = state.last_sector_header;
+        self.last_audio_sector = state.last_audio_sector;
+        self.cd_to_spu_volume = state.cd_to_spu_volume;
+        self.pending_cd_to_spu_volume = state.pending_cd_to_spu_volume;
+        self.audio_sample = state.audio_sample;
+        self.command_state = state.command_state;
+        self.shell_once_opened = state.shell_once_opened;
+        self.send_int5_shell_opened = state.send_int5_shell_opened;
+        self.motor_on = state.motor_on;
+        self.pending_setloc = state.pending_setloc;
+        self.mode = state.mode;
+        self.adpcm = state.adpcm;
+        self.pending_irq = state.pending_irq;
+    }
 }
 
 impl DmaDevice for CDRom {

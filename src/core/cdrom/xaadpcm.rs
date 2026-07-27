@@ -30,9 +30,10 @@
 //! from each block, then the second sample from each block, then the third, etc. The final 4 bytes
 //! contain the 28th sample from each block.
 
-use tracing::warn;
 use crate::core::spu::adpcm;
 use crate::core::spu::adpcm::{FILTER_0_TABLE, FILTER_1_TABLE};
+use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 // Table from <https://psx-spx.consoledev.net/cdromdrive/#cdrom-xa-audio-adpcm-compression>
 // Used in zig-zag interpolation when resampling 37800/19800 Hz ADPCM samples to 44100 Hz
@@ -62,7 +63,7 @@ const ADPCM_BUFFER_CAPACITY: usize = 18 * 8 * 28;
 // 44100 Hz = 14/6 * 18900 Hz
 const OUTPUT_BUFFER_CAPACITY: usize = ADPCM_BUFFER_CAPACITY * 14 / 6;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize,Deserialize)]
 struct ResampleRingBuffer {
     buffer: [i16; 32],
     idx: usize,
@@ -84,13 +85,13 @@ impl ResampleRingBuffer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,Serialize,Deserialize)]
 enum ChannelMode {
     Stereo,
     Mono,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,Serialize,Deserialize)]
 enum SampleRate {
     // 39800 Hz
     Normal,
@@ -98,7 +99,7 @@ enum SampleRate {
     Half,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize,Deserialize)]
 pub struct XaAdpcmState {
     pub file: u8,
     pub channel: u8,

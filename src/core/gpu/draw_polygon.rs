@@ -312,13 +312,13 @@ impl GPU {
                 if (abp + bias_ab >= 0) && (bcp + bias_bc >= 0) && (cap + bias_ca >= 0) {
                     let weight_a = bcp as f32 * inv_abc;
                     let weight_b = cap as f32 * inv_abc;
-                    let weight_c = 1.0 - weight_a - weight_b;
+                    let weight_c = (1.0f32 - weight_a - weight_b).max(0.0);
 
                     let mut color = if is_gouraud {
                         let r = r0 * weight_a + r1 * weight_b + r2 * weight_c;
                         let g = g0 * weight_a + g1 * weight_b + g2 * weight_c;
                         let b = b0 * weight_a + b1 * weight_b + b2 * weight_c;
-                        Color::new(r.round() as u8, g.round() as u8, b.round() as u8, false)
+                        Color::new(r.clamp(0.0, 255.0).round() as u8, g.clamp(0.0, 255.0).round() as u8, b.clamp(0.0, 255.0).round() as u8, false)
                     } else {
                         *ac
                     };

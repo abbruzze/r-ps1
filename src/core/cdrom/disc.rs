@@ -1,19 +1,20 @@
-use crate::core::cdrom::{cue, util, Region};
 use crate::core::Resettable;
+use crate::core::cdrom::{Region, cue, util};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use zip::ZipArchive;
 
 pub(super) const SECTOR_SIZE : u16 = 2352;
 
 const FILE_BUFFER_SIZE : usize = 1024 * 1024;
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone,Debug,Serialize,Deserialize)]
 pub struct DiscTime {
     minutes:u8, // 00 - 99
     seconds:u8, // 00 - 59
@@ -119,7 +120,7 @@ impl BCD {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone,Serialize,Deserialize)]
 pub struct AudioLeftRight(pub i16,pub i16);
 
 #[derive(Debug)]
@@ -531,7 +532,7 @@ impl Disc {
         }
     }
 
-    pub fn read_sector(&mut self) -> SectorReadResult {
+    pub(super) fn read_sector(&mut self) -> SectorReadResult {
         let msf = self.head_position;
         let mut track_number : Option<u8> = None;
         let resp = match self.find_track(msf) {

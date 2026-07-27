@@ -168,7 +168,7 @@ pub struct Timer<const N: usize> {
     blank_pending_cycles: u64,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize,Clone)]
 pub struct TimerState {
     counter: u16,
     counter_mode: u16,

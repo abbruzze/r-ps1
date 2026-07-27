@@ -1,8 +1,7 @@
 use crate::core::cdrom::commands::{INT1, INT4};
-use crate::core::cdrom::disc::{Disc, SectorReadResult, BCD};
+use crate::core::cdrom::disc::{BCD, SectorReadResult};
 use crate::core::cdrom::{CDRom, Command, DriveState};
 use crate::core::interrupt::IrqHandler;
-use std::process::exit;
 use tracing::{debug, error, info, warn};
 
 impl CDRom {

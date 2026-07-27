@@ -1,19 +1,21 @@
+use crate::core::Resettable;
 use crate::core::cdrom::CDRom;
-use crate::core::clock::{Clock, ClockConfig};
+use crate::core::clock::{Clock, ClockConfig, ClockState};
 use crate::core::config::Config;
-use crate::core::cpu::cop0::Cop0;
 use crate::core::cpu::Cpu;
-use crate::core::dma::DMAController;
-use crate::core::gpu::GPU;
+use crate::core::cpu::cop0::{Cop0, Cop0State};
+use crate::core::dma::{DMAController, DMAControllerState};
+use crate::core::gpu::{GPU, GPUState};
 use crate::core::interrupt::{InterruptController, IrqHandler};
-use crate::core::mdec::MDec;
+use crate::core::mdec::{MDec, MDecState};
 use crate::core::memory::get_memory_map;
 use crate::core::memory::{ArrayMemory, MemoryMap, MemorySection, MemorySegment};
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
-use crate::core::sio::SIO0;
-use crate::core::spu::Spu;
-use crate::core::timer::Timer;
-use crate::core::Resettable;
+use crate::core::sio::{SIO0, SIO0State};
+use crate::core::snapshot::SnapshotAware;
+use crate::core::spu::{Spu, SpuState};
+use crate::core::timer::{Timer, TimerState};
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
 use tracing::{debug, info, warn};
@@ -135,6 +137,7 @@ impl<const N: usize> MemoryBridge<N> {
     }
 }
 
+#[derive(Debug,Clone,Serialize,Deserialize)]
 struct Interrupt {
     pending: u16,
     mask: u16,
@@ -198,6 +201,69 @@ pub struct Bus {
     cache_control_reg: u32,
     interrupt: Interrupt,
     io_mem_bridge: MemoryBridge<0x1000>,
+}
+
+#[derive(Serialize,Deserialize)]
+pub struct BusState {
+    clock_state: ClockState,
+    bios: Vec<u8>,
+    ram:Vec<u8>,
+    cop0_state: Cop0State,
+    timers_state: [TimerState;3],
+    dma_state: DMAControllerState,
+    gpu_state: GPUState,
+    //cdrom_state: CdRomState,
+    spu_state: SpuState,
+    mdec_state: MDecState,
+    sio0_state: SIO0State,
+    scratchpad_state: Vec<u8>,
+    cache_control_reg: u32,
+    interrupt: Interrupt,
+}
+
+impl SnapshotAware for Bus {
+    type State = BusState;
+
+    fn snapshot(&self) -> BusState {
+        BusState {
+            clock_state: self.clock.snapshot(),
+            bios: self.bios.memory.clone(),
+            ram: self.main_ram.clone(),
+            cop0_state: self.cop0.snapshot(),
+            timers_state: [
+                self.timer0.snapshot(),
+                self.timer1.snapshot(),
+                self.timer2.snapshot(),
+            ],
+            dma_state: self.dma.borrow().snapshot(),
+            gpu_state: self.gpu.borrow().snapshot(),
+            //cdrom_state: self.cdrom.borrow().snapshot(),
+            spu_state: self.spu.borrow().snapshot(),
+            mdec_state: self.mdec.borrow().snapshot(),
+            sio0_state: self.sio0.snapshot(),
+            scratchpad_state: self.scratchpad.clone(),
+            cache_control_reg: self.cache_control_reg,
+            interrupt: self.interrupt.clone(),
+        }
+    }
+
+    fn restore(&mut self, state: BusState) {
+        self.clock.restore(state.clock_state);
+        self.bios.memory = state.bios;
+        self.main_ram = state.ram;
+        self.cop0.restore(state.cop0_state);
+        self.timer0.restore(state.timers_state[0].clone());
+        self.timer1.restore(state.timers_state[1].clone());
+        self.timer2.restore(state.timers_state[2].clone());
+        self.dma.borrow_mut().restore(state.dma_state);
+        self.gpu.borrow_mut().restore(state.gpu_state);
+        self.spu.borrow_mut().restore(state.spu_state);
+        self.mdec.borrow_mut().restore(state.mdec_state);
+        self.sio0.restore(state.sio0_state);
+        self.scratchpad = state.scratchpad_state;
+        self.cache_control_reg = state.cache_control_reg;
+        self.interrupt = state.interrupt;
+    }
 }
 
 impl InterruptController for Bus {

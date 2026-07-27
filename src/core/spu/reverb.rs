@@ -1,5 +1,4 @@
 use super::util::{I32Ext, U32Ext};
-use crate::core::Resettable;
 use crate::core::spu::voice::Voice;
 use crate::core::spu::{NUM_VOICES, SOUND_RAM_LEN, SOUND_RAM_MASK, SoundRam, multiply_volume, multiply_volume_i32};
 use serde::{Deserialize, Serialize};
