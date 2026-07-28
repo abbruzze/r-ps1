@@ -1,5 +1,5 @@
 use crate::core::Resettable;
-use crate::core::cdrom::CDRom;
+use crate::core::cdrom::{CDRom, CDRomState};
 use crate::core::clock::{Clock, ClockConfig, ClockState};
 use crate::core::config::Config;
 use crate::core::cpu::Cpu;
@@ -212,10 +212,11 @@ pub struct BusState {
     timers_state: [TimerState;3],
     dma_state: DMAControllerState,
     gpu_state: GPUState,
-    //cdrom_state: CdRomState,
+    cdrom_state: CDRomState,
     spu_state: SpuState,
     mdec_state: MDecState,
     sio0_state: SIO0State,
+    io_ports: [u32;IO_PORTS_LEN],
     scratchpad_state: Vec<u8>,
     cache_control_reg: u32,
     interrupt: Interrupt,
@@ -237,10 +238,11 @@ impl SnapshotAware for Bus {
             ],
             dma_state: self.dma.borrow().snapshot(),
             gpu_state: self.gpu.borrow().snapshot(),
-            //cdrom_state: self.cdrom.borrow().snapshot(),
+            cdrom_state: self.cdrom.borrow().snapshot(),
             spu_state: self.spu.borrow().snapshot(),
             mdec_state: self.mdec.borrow().snapshot(),
             sio0_state: self.sio0.snapshot(),
+            io_ports: self.io_ports,
             scratchpad_state: self.scratchpad.clone(),
             cache_control_reg: self.cache_control_reg,
             interrupt: self.interrupt.clone(),
@@ -257,9 +259,11 @@ impl SnapshotAware for Bus {
         self.timer2.restore(state.timers_state[2].clone());
         self.dma.borrow_mut().restore(state.dma_state);
         self.gpu.borrow_mut().restore(state.gpu_state);
+        self.cdrom.borrow_mut().restore(state.cdrom_state);
         self.spu.borrow_mut().restore(state.spu_state);
         self.mdec.borrow_mut().restore(state.mdec_state);
         self.sio0.restore(state.sio0_state);
+        self.io_ports = state.io_ports;
         self.scratchpad = state.scratchpad_state;
         self.cache_control_reg = state.cache_control_reg;
         self.interrupt = state.interrupt;

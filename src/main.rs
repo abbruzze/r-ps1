@@ -144,6 +144,9 @@ fn main() {
         }
     }
     
+    config.emu_home = Some(emu_dir.to_path_buf());
+    config.emu_version = String::from(EMU_VERSION);
+    
     renderer::pixels::run_loop(|renderer, gui_event_rx, config| {
         let logger = log::Logger::new(config.log_config.log_file.clone(),config.log_config.log_severity.clone());
 

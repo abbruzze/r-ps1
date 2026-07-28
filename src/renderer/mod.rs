@@ -6,7 +6,7 @@ use crate::core::config::Config;
 use crate::core::controllers::ControllerButton;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 #[derive(Debug, Clone)]
 pub enum PS1Event {
@@ -18,6 +18,7 @@ pub enum PS1Event {
     Shutdown,
     SetRegion(Region),
     AudioMute(bool),
+    Message(String, usize, bool), // String, duration in seconds, is_error
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +33,9 @@ pub enum GUIEvent {
     Cheat,
     Reset(bool),
     Ready,
+    SnapshotSlotSelect(u8),
+    SnapshotSaveRequest,
+    SnapshotLoadRequest,
 }
 
 /*
@@ -106,4 +110,5 @@ pub trait Renderer {
     fn set_region(&mut self,region:Region);
     fn set_audio_mute(&mut self,mute:bool);
     fn get_mouse_accumulator(&self) -> Arc<MouseAccumulator>;
+    fn message(&mut self,text:&str,duration_sec: usize,is_error:bool);
 }

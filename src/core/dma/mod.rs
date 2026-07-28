@@ -1,13 +1,13 @@
+use crate::core::Resettable;
 use crate::core::clock::Clock;
 use crate::core::interrupt::{InterruptType, IrqHandler};
 use crate::core::memory::bus::Bus;
 use crate::core::memory::{Memory, ReadMemoryAccess, WriteMemoryAccess};
 use crate::core::snapshot::SnapshotAware;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-use crate::core::Resettable;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DMAChannelState {
@@ -57,7 +57,7 @@ impl DmaDevice for DummyDMAChannel {
     }
 }
 
-#[derive(Debug,Clone,Serialize,Deserialize)]
+#[derive(Debug,Copy,Clone,Serialize,Deserialize)]
 enum SyncMode {
     Manual,
     Slice,
@@ -80,7 +80,7 @@ impl SyncMode {
         }
     }
 }
-#[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
+#[derive(Debug,PartialEq,Copy,Clone,Serialize,Deserialize)]
 enum TransferDirection {
     DeviceToRAM,
     RAMToDevice,
@@ -648,16 +648,8 @@ impl SnapshotAware for DMAChannel {
             chcr: self.chcr,
             enabled: self.enabled,
             bus_error: self.bus_error,
-            sync_mode: match self.sync_mode {
-                SyncMode::Manual => SyncMode::Manual,
-                SyncMode::Slice => SyncMode::Slice,
-                SyncMode::LinkedList => SyncMode::LinkedList,
-                SyncMode::Reserved => SyncMode::Reserved,
-            },
-            transfer_direction: match self.transfer_direction {
-                TransferDirection::DeviceToRAM => TransferDirection::DeviceToRAM,
-                TransferDirection::RAMToDevice => TransferDirection::RAMToDevice,
-            },
+            sync_mode: self.sync_mode,
+            transfer_direction: self.transfer_direction,
             remaining_words: self.remaining_words,
             remaining_blocks: self.remaining_blocks,
             waiting_next_block: self.waiting_next_block,

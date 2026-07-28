@@ -7,27 +7,29 @@ use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
 use crate::core::config::{Config, ControllerType, RegionPolicyConfig};
 use crate::core::controllers::MouseInfo;
-use crate::core::cpu::{disassembler, Cpu};
+use crate::core::cpu::{Cpu, CpuState, disassembler};
 use crate::core::debugger::{BreakPoints, DebuggerCommand};
 use crate::core::debugger::{DebuggerResponse, RunMode};
 use crate::core::dma::{DMAController, DmaDevice, DummyDMAChannel};
-use crate::core::gpu::{VideoMode, GPU};
-use crate::core::interrupt::IrqHandler;
+use crate::core::gpu::{GPU, VideoMode};
+use crate::core::interrupt::{IrqHandler, IrqHandlerState};
 use crate::core::mdec::{MDec, MDecIn, MDecOut};
-use crate::core::memory::bus::Bus;
-use crate::core::memory::{ArrayMemory, Memory, ReadMemoryAccess, BIOS_LEN};
+use crate::core::memory::bus::{Bus, BusState};
+use crate::core::memory::{ArrayMemory, BIOS_LEN, Memory, ReadMemoryAccess};
+use crate::core::snapshot::{SnapshotAware, SnapshotManager};
 use crate::core::spu::{AdpcmInterpolation, Spu};
-use crate::core::{debugger, Resettable};
+use crate::core::{Resettable, debugger};
 use crate::log::Logger;
 use crate::renderer::{GUIEvent, MouseAccumulator, Renderer};
 use build_time::build_time_local;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, thread};
 use thread::spawn;
 use tracing::{error, info, warn};
@@ -51,6 +53,10 @@ impl Perf {
             initialized: false,
             duration,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.initialized = false;
     }
 
     pub fn throttle(&mut self,elapsed_cycles:u64,clock_config:&ClockConfig,warp_mode:bool) -> u16 {
@@ -104,6 +110,60 @@ pub struct Emulator {
     shutting_down: bool,
     mouse_accumulator: Arc<MouseAccumulator>,
     mouse_enabled: bool,
+    snapshot_manager: SnapshotManager,
+    snapshot_request_pending: bool,
+    irq_handler: IrqHandler,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EmulatorState {
+    emu_version: String,
+    timestamp: u64,
+    cpu_state: CpuState,
+    bus_state: BusState,
+    irq_handler_state: IrqHandlerState,
+    dma_in_progress: bool,
+    disc_path:Option<PathBuf>,
+}
+
+impl SnapshotAware for Emulator {
+    type State = EmulatorState;
+
+    fn snapshot(&self) -> EmulatorState {
+        let disc_path = self.cdrom.borrow().get_disc().map(|disc| PathBuf::from(disc.get_original_cue_file_name().clone()));
+        EmulatorState {
+            emu_version: self.config.emu_version.clone(),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
+            cpu_state: self.cpu.snapshot(),
+            bus_state: self.bus.snapshot(),
+            irq_handler_state: self.irq_handler.snapshot(),
+            dma_in_progress: self.dma_in_progress,
+            disc_path,
+        }
+    }
+
+    fn restore(&mut self, state: EmulatorState) {
+        let dt = chrono::DateTime::from_timestamp_millis( state.timestamp as i64).unwrap();
+        info!("Restoring emulator state from {} with version {}", dt.format("%d/%m/%Y %H:%M:%S"), state.emu_version);
+        match state.disc_path.as_ref() {
+            Some(disc_path) => {
+                if disc_path.exists() {
+                    // restoring state
+                    self.irq_handler.restore(state.irq_handler_state);
+                    self.dma_in_progress = state.dma_in_progress;
+                    self.cpu.restore(state.cpu_state);
+                    self.bus.restore(state.bus_state);
+                    self.perf.reset();
+
+                    info!("Loading disc {} from snapshot ...", disc_path.to_string_lossy());
+                    self.load_disc(&disc_path.to_string_lossy().to_string(), true);
+                } else {
+                    warn!("Disc path '{}' from snapshot does not exist, skipping snapshot", disc_path.to_string_lossy());
+                }
+            }
+            None => {}
+        }
+    }
 }
 
 impl Resettable for Emulator {
@@ -167,6 +227,7 @@ impl Emulator {
         
         let dma = Rc::new(RefCell::new(DMAController::new(&devices)));
         let bus = Bus::new(ClockConfig::NTSC,&config,bios,&dma,&gpu,&cdrom,&mdec,&spu);
+        let emu_home = config.emu_home.as_ref().unwrap().clone().join("snapshot");
 
         let mut emu = Self {
             cpu,bus,
@@ -194,6 +255,9 @@ impl Emulator {
             shutting_down: false,
             mouse_accumulator: mouse_acc,
             mouse_enabled: false,
+            snapshot_manager: SnapshotManager::new(emu_home),
+            snapshot_request_pending: false,
+            irq_handler: IrqHandler::new(),
         };
 
         // mouse
@@ -328,8 +392,6 @@ impl Emulator {
             self.bus.get_sio0_mut().get_controller_mut(1).get_memory_card_mut().set_file_name(String::from(card_path)).unwrap_or_else(|e| error!("Cannot read memory card '{card_path}' for controller 2: {:?}",e));
         }
 
-        let mut irq_handler = IrqHandler::new();
-
         // before starting of main loop, sleep a while to let the splash screen to be visible
         while let Ok(event) = self.gui_event_rx.recv() && !matches!(event,GUIEvent::Ready) {}
             
@@ -375,13 +437,20 @@ impl Emulator {
                     }
                     continue 'main_loop;
                 }
+
+                // snapshot handling in sync with GPU
+                if self.snapshot_request_pending && self.gpu.borrow().is_waiting_command() {
+                    self.snapshot_request_pending = false;
+                    self.save_snapshot();
+                }
+
                 self.last_cycles = self.cpu.execute_next_instruction(&mut self.bus,self.dma_in_progress);
 
                 // DMA
-                self.dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut irq_handler);
+                self.dma_in_progress = self.dma.borrow_mut().do_dma_for_cpu_cycles(self.last_cycles, &mut self.bus,&mut self.irq_handler);
 
                 // IRQs
-                irq_handler.forward_to_controller(&mut self.bus);
+                self.irq_handler.forward_to_controller(&mut self.bus);
 
                 if send_step {
                     self.send_cpu_info(&loop_tx_cmd);
@@ -392,22 +461,22 @@ impl Emulator {
 
             let events_to_process = self.bus.get_clock_mut().next_events();
             for event in events_to_process {
-                self.process_event(event,&mut irq_handler);
+                self.process_event(event);
             }
-            irq_handler.forward_to_controller(&mut self.bus);
+            self.irq_handler.forward_to_controller(&mut self.bus);
         }
     }
 
-    fn process_event(&mut self,event: Event,irq_handler:&mut IrqHandler) {
+    fn process_event(&mut self,event: Event) {
         match event.event_type {
             EventType::HBlankEnd => {
                 self.gpu.borrow_mut().on_hblank_end(event.over_cycles,&mut self.bus);
             }
             EventType::HBlankStart => {
-                self.gpu.borrow_mut().on_hblank_start(&mut self.bus,irq_handler,event.over_cycles);
+                self.gpu.borrow_mut().on_hblank_start(&mut self.bus,&mut self.irq_handler,event.over_cycles);
             }
             EventType::RasterLineEnd => {
-                self.new_frame = self.gpu.borrow_mut().on_raster_line_end(&mut self.bus, irq_handler, event.over_cycles);
+                self.new_frame = self.gpu.borrow_mut().on_raster_line_end(&mut self.bus, &mut self.irq_handler, event.over_cycles);
 
                 if self.new_frame {
                     self.check_input();
@@ -431,27 +500,27 @@ impl Emulator {
             }
             EventType::Timer0 => {
                 let (timer0,clock) = self.bus.get_timer0_and_clock_mut();
-                timer0.on_timer_expired(clock,irq_handler);
+                timer0.on_timer_expired(clock,&mut self.irq_handler);
             }
             EventType::Timer1 => {
                 let (timer1,clock) = self.bus.get_timer1_and_clock_mut();
-                timer1.on_timer_expired(clock,irq_handler);
+                timer1.on_timer_expired(clock,&mut self.irq_handler);
             }
             EventType::Timer2 => {
                 let (timer2,clock) = self.bus.get_timer2_and_clock_mut();
-                timer2.on_timer_expired(clock,irq_handler);
+                timer2.on_timer_expired(clock,&mut self.irq_handler);
             }
             e@(EventType::SIO0Byte | EventType::SIO0Ack) => {
                 let (sio0,clock) = self.bus.get_sio0_and_clock_mut();
-                sio0.on_event(e,clock,irq_handler);
+                sio0.on_event(e,clock,&mut self.irq_handler);
             }
             EventType::GPUCommandCompleted => {
-                self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), irq_handler);
+                self.gpu.borrow_mut().command_completed(self.bus.get_clock_mut(), &mut self.irq_handler);
             }
             EventType::Audio44100 => {
                 let mut cdrom = self.cdrom.borrow_mut();
-                self.last_cd_op = cdrom.clock_44100hz(irq_handler);
-                let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&cdrom,irq_handler));
+                self.last_cd_op = cdrom.clock_44100hz(&mut self.irq_handler);
+                let sample = AudioSample::new_lr(self.spu.borrow_mut().clock(&cdrom,&mut self.irq_handler));
                 if let Some(audio_device) = self.audio_device.as_mut() {
                     if !self.warp_mode_enabled && !self.audio_muted {
                         audio_device.play_sample(sample);
@@ -506,6 +575,15 @@ impl Emulator {
                     self.reset_component(hard_reset);
                 }
                 GUIEvent::Ready => {}
+                GUIEvent::SnapshotSlotSelect(slot) => {
+                    self.snapshot_manager.set_slot(slot);
+                }
+                GUIEvent::SnapshotSaveRequest => {
+                    self.snapshot_request_pending = true;
+                }
+                GUIEvent::SnapshotLoadRequest => {
+                    self.load_snapshot();
+                }
             }
         }
     }
@@ -571,15 +649,9 @@ impl Emulator {
             true
         }
         else if breaks.execute.contains(&pc) {
-            //*hits += 1;
-            //if *hits == 0x100 {
-                info!("Break on execute at {:08X}",pc);
-                loop_tx_cmd.send(DebuggerResponse::BreakAt(pc)).unwrap();
-                true
-            // }
-            // else {
-            //     false
-            // }
+            info!("Break on execute at {:08X}",pc);
+            loop_tx_cmd.send(DebuggerResponse::BreakAt(pc)).unwrap();
+            true
         }
         else if let Some(break_read_addr) = self.cpu.get_last_mem_read_address() && breaks.read.contains(&break_read_addr) {
             info!("Break on read at {:08X}. Read value {:08X}",break_read_addr,self.cpu.get_last_mem_rw_value());
@@ -668,6 +740,30 @@ impl Emulator {
             other => {
                 error!("Unexpected fetching error {:?}",other);
                 None
+            }
+        }
+    }
+
+    fn save_snapshot(&mut self) {
+        self.gpu.borrow_mut().get_renderer_mut().message(format!("Saving snapshot to slot {}",self.snapshot_manager.get_slot()).as_str(), 1, false);
+        match self.snapshot_manager.save_state(self) {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Failed to save snapshot: {}", e);
+                self.gpu.borrow_mut().get_renderer_mut().message(format!("Error while saving snapshot to slot {}",self.snapshot_manager.get_slot()).as_str(), 2, true);
+            }
+        }
+    }
+
+    fn load_snapshot(&mut self) {
+        self.gpu.borrow_mut().get_renderer_mut().message(format!("Loading snapshot from slot {}",self.snapshot_manager.get_slot()).as_str(), 1, false);
+        match self.snapshot_manager.load_state::<EmulatorState>() {
+            Ok(state) => {
+                self.restore(state);
+            }
+            Err(e) => {
+                error!("Failed to load snapshot: {}", e);
+                self.gpu.borrow_mut().get_renderer_mut().message(format!("Error while loading snapshot from slot {}",self.snapshot_manager.get_slot()).as_str(), 2, true);
             }
         }
     }

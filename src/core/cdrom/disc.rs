@@ -297,6 +297,7 @@ pub(super) enum SectorReadResult {
 
 #[derive(Debug)]
 pub struct Disc {
+    original_cue_file_name:String,
     cue_file_name:String,
     tracks:Vec<Track>,
     files:Vec<(BufReader<File>,PathBuf)>,
@@ -376,6 +377,7 @@ impl Disc {
         let file_path_dir = Path::new(&file_name).parent().unwrap();
 
         let mut disc = Disc {
+            original_cue_file_name: cue_file_name.clone(),
             cue_file_name: file_name.clone(),
             tracks: Vec::new(),
             files: Vec::new(),
@@ -509,6 +511,10 @@ impl Disc {
             let file = &mut self.files[file_id].0;
             (track,file,file_path)
         })
+    }
+    
+    pub fn get_original_cue_file_name(&self) -> &String {
+        &self.original_cue_file_name
     }
 
     pub fn get_cue_file_name(&self) -> &String {

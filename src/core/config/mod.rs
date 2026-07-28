@@ -480,6 +480,10 @@ pub struct CheatsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Config {
     #[serde(skip)]
+    pub emu_version: String,
+    #[serde(skip)]
+    pub emu_home: Option<PathBuf>,
+    #[serde(skip)]
     pub file_config: Option<PathBuf>,
     pub disc_path: Option<String>,
     pub bios_path: Option<String>,

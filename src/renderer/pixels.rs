@@ -9,9 +9,9 @@ use crate::renderer::text_renderer::TextRenderer;
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use gilrs::{Event, EventType, Gilrs};
-use pixels::{wgpu, Pixels, PixelsBuilder, SurfaceTexture};
+use pixels::{Pixels, PixelsBuilder, SurfaceTexture, wgpu};
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Instant;
 use tracing::{debug, error, info};
@@ -32,6 +32,8 @@ const DEFAULT_HEIGHT: usize = (480.0 * DEFAULT_SCALE) as usize;
 const FONT_SIZE: f32 = 14.0;
 
 const FPS_PERIOD_MILLIS: u128 = 600;
+
+const MESSAGE_FPS_1_SEC : usize = 60;
 
 pub struct GPUPixelsRenderer {
     event_proxy: EventLoopProxy<PS1Event>,
@@ -71,6 +73,9 @@ impl Renderer for GPUPixelsRenderer {
     }
     fn get_mouse_accumulator(&self) -> Arc<MouseAccumulator> {
         Arc::clone(&self.mouse_acc)
+    }
+    fn message(&mut self,text:&str,duration_sec: usize,is_error:bool) {
+        let _ = self.event_proxy.send_event(PS1Event::Message(text.to_string(), duration_sec,is_error));
     }
 }
 
@@ -266,6 +271,27 @@ fn usb_controller_loop(config:Config,gui_event_tx:mpsc::Sender<GUIEvent>) {
     }
 }
 
+#[derive(Clone)]
+struct Message {
+    text: String,
+    color: [u8; 4],
+    fps_counter: usize,
+}
+
+impl Message {
+    pub fn new(text:String, color:[u8; 4], fps_counter:usize) -> Self {
+        Self {
+            text,
+            color,
+            fps_counter,
+        }
+    }
+    pub fn decrease_fps(&mut self) -> usize {
+        self.fps_counter = self.fps_counter.saturating_sub(1);
+        self.fps_counter
+    }
+}
+
 struct PixelsRenderer {
     window: Option<&'static Window>,
     pixels: Option<Pixels<'static>>,
@@ -299,6 +325,7 @@ struct PixelsRenderer {
     text_renderer: TextRenderer,
     mouse_acc: Arc<MouseAccumulator>,
     mouse_enabled: bool,
+    messages: Vec<Message>,
 }
 
 impl PixelsRenderer {
@@ -336,6 +363,7 @@ impl PixelsRenderer {
             text_renderer: TextRenderer::new(),
             mouse_acc: mouse_acc.clone(),
             mouse_enabled: false,
+            messages: Vec::new(),
         };
 
         renderer.full_screen = renderer.config.gpu_config.start_full_screen;
@@ -407,22 +435,23 @@ impl PixelsRenderer {
                         None => String::from("")
                     };
                 }
-                let mut message : Option<String> = None;
+                let mut message : Vec<(String,[u8;4])> = vec![];
+                const WHITE_COLOR: [u8; 4] = [255,255,255,255];
                 let disc_name = self.disc_name.clone().unwrap_or_else(|| String::from(""));
 
                 if let Some(unzipping) = &self.disc_unzipping {
                     window.set_title(&format!("{} v.{} - Unzipping disc {} ...",EMU_NAME,EMU_VERSION,unzipping));
-                    message = Some(format!("Unzipping disc {} ...",unzipping));
+                    message.push((format!("Unzipping disc {} ...",unzipping),WHITE_COLOR));
                 }
                 else if self.warp_mode || self.paused || self.debug_mode  || self.audio_muted {
                     let mut info = String::new();
                     if self.warp_mode {
                         info.push_str(" (warp mode)");
-                        message = Some("Warp mode ...".to_string());
+                        message.push(("Warp mode ...".to_string(),WHITE_COLOR));
                     }
                     if self.paused {
                         info.push_str(" (paused)");
-                        message = Some("Paused".to_uppercase());
+                        message.push(("Paused".to_uppercase(),WHITE_COLOR));
                     }
                     if self.debug_mode {
                         info.push_str(" (debug mode)");
@@ -436,11 +465,20 @@ impl PixelsRenderer {
                     window.set_title(&format!("{} v.{} - ({:?}) FPS: {:3} CPU: {:3}% [{}x{}] {cd_info} / {disc_name}",EMU_NAME,EMU_VERSION,self.region,fps,self.last_performance,self.visible_width,self.visible_height));
                 }
 
-                if let Some(msg) = message.as_ref() && let Some(pixels) = self.pixels.as_mut() && let Some(window) = self.window {
+                for msg in self.messages.iter() {
+                    message.push((msg.text.clone(),msg.color));
+                }
+
+                if message.len() > 0 && let Some(pixels) = self.pixels.as_mut() && let Some(window) = self.window {
                     let buffer = pixels.frame_mut();
                     let window_size = window.inner_size();
                     let font_size = window_size.width as f32 / DEFAULT_WIDTH as f32 * FONT_SIZE;
-                    self.text_renderer.draw_text(buffer,self.pixels_dimension.0,msg,10,(self.pixels_dimension.1 - font_size as u32) as i32,font_size,[255,255,255,255]);
+                    let mut y = (self.pixels_dimension.1 - font_size as u32) as i32;
+                    for (msg,color) in message.iter() {
+                        self.text_renderer.draw_text(buffer,self.pixels_dimension.0,msg,10,y,font_size,*color);
+                        y -= (font_size * 1.5) as i32;
+                    }
+
                     pixels.render().unwrap();
                 }
             }
@@ -536,7 +574,8 @@ impl PixelsRenderer {
             if pixels.render().is_err() {
                 println!("Pixels render error");
             }
-            self.update_fps(false);
+            self.messages.retain_mut(|msg| msg.decrease_fps() > 0);
+            self.update_fps(self.messages.len() > 0);
             self.window.unwrap().request_redraw();
         }
     }
@@ -551,6 +590,10 @@ impl PixelsRenderer {
             let frame_buffer = pixels.frame_mut();
             frame_buffer.copy_from_slice(&splash_image.to_rgba8().into_raw());
         }
+    }
+
+    fn add_message(&mut self, message: String, color: [u8;4],fps_wait:usize) {
+        self.messages.push(Message::new(message,color,fps_wait));
     }
 }
 
@@ -680,6 +723,9 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
             PS1Event::AudioMute(on) => {
                 self.audio_muted = on;
             }
+            PS1Event::Message(msg, duration_sec, is_error) => {
+                self.add_message(msg, if is_error { [255, 255, 0, 0] } else { [255, 255, 255, 255] }, duration_sec * 60);
+            }
         }
     }
 
@@ -776,6 +822,34 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                             KeyCode::F5 if self.key_modifiers.alt_key() => {
                                 let _ = self.gui_event_tx.send(GUIEvent::Reset(self.key_modifiers.shift_key()));
                                 return;
+                            }
+                            KeyCode::KeyS if self.key_modifiers.alt_key() => {
+                                let _ = self.gui_event_tx.send(GUIEvent::SnapshotSaveRequest);
+                                return;
+                            }
+                            KeyCode::KeyL if self.key_modifiers.alt_key() => {
+                                let _ = self.gui_event_tx.send(GUIEvent::SnapshotLoadRequest);
+                                return;
+                            }
+                            kc if self.key_modifiers.alt_key() => {
+                                let slot = match kc {
+                                    KeyCode::Digit0 => Some(0u8),
+                                    KeyCode::Digit1 => Some(1),
+                                    KeyCode::Digit2 => Some(2),
+                                    KeyCode::Digit3 => Some(3),
+                                    KeyCode::Digit4 => Some(4),
+                                    KeyCode::Digit5 => Some(5),
+                                    KeyCode::Digit6 => Some(6),
+                                    KeyCode::Digit7 => Some(7),
+                                    KeyCode::Digit8 => Some(8),
+                                    KeyCode::Digit9 => Some(9),
+                                    _ => None,
+                                };
+                                if let Some(s) = slot {
+                                    self.add_message(format!("Selected snapshot slot #{}", s),[255,255,255,255],MESSAGE_FPS_1_SEC * 2);
+                                    let _ = self.gui_event_tx.send(GUIEvent::SnapshotSlotSelect(s));
+                                    return;
+                                }
                             }
                             _ => {}
                         }

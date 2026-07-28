@@ -409,6 +409,10 @@ impl CDRom {
         }
     }
 
+    pub fn get_disc(&self) -> Option<&Disc> {
+        self.disc.as_ref()
+    }
+
     pub fn clock_44100hz(&mut self,irq_handler: &mut IrqHandler) -> CDOperation {
         if self.changing_disk_cycles > 0 {
             if self.send_int5_shell_opened {
