@@ -1,5 +1,6 @@
 use crate::core::Resettable;
 use crate::core::cdrom::{Region, cue, util};
+use crate::core::snapshot::SnapshotAware;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
@@ -308,6 +309,30 @@ pub struct Disc {
     temp_dir: Option<TempDir>,
 }
 
+#[derive(Clone,Serialize, Deserialize)]
+pub struct DiscState {
+    pub original_cue_file_name:String,
+    head_position: DiscTime,
+    track_number: u8,
+}
+
+impl SnapshotAware for Disc {
+    type State = DiscState;
+
+    fn snapshot(&self) -> DiscState {
+        DiscState {
+            original_cue_file_name:self.original_cue_file_name.clone(),
+            head_position:self.head_position,
+            track_number:self.track_number,
+        }
+    }
+
+    fn restore(&mut self, state: DiscState) {
+        self.head_position = state.head_position;
+        self.track_number = state.track_number;
+    }
+}
+
 impl Resettable for Disc {
     fn reset_component(&mut self, _hard_reset: bool) {
         self.track_number = 0;
@@ -512,7 +537,7 @@ impl Disc {
             (track,file,file_path)
         })
     }
-    
+
     pub fn get_original_cue_file_name(&self) -> &String {
         &self.original_cue_file_name
     }

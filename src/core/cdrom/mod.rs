@@ -7,7 +7,7 @@ mod xaadpcm;
 
 use crate::core::Resettable;
 use crate::core::cdrom::commands::INT5;
-use crate::core::cdrom::disc::{AudioLeftRight, Disc, DiscTime, TrackSectorDataSize};
+use crate::core::cdrom::disc::{AudioLeftRight, Disc, DiscState, DiscTime, TrackSectorDataSize};
 use crate::core::cdrom::xaadpcm::XaAdpcmState;
 use crate::core::clock::Clock;
 use crate::core::dma::DmaDevice;
@@ -389,6 +389,16 @@ impl CDRom {
             changing_disk_cycles: 0,
             pending_disc: None,
             pending_irq: None,
+        }
+    }
+
+    pub fn restore_disc_from_snapshot(&mut self, disc:Disc) {
+        self.disc = Some(disc);
+    }
+
+    pub fn restore_disc_state_from_snapshot(&mut self, disc_state:DiscState) {
+        if let Some(disc) = self.disc.as_mut() {
+            disc.restore(disc_state);
         }
     }
 

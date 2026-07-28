@@ -2,6 +2,7 @@ use crate::audio::cpal::CpalAudioDevice;
 use crate::audio::{AudioDevice, AudioSample};
 use crate::cheats::Cheats;
 use crate::core::bios::PS1_BIOS_SET;
+use crate::core::cdrom::disc::DiscState;
 use crate::core::cdrom::{CDOperation, CDRom, Region};
 use crate::core::clock::EventType;
 use crate::core::clock::{ClockConfig, Event};
@@ -123,14 +124,14 @@ pub struct EmulatorState {
     bus_state: BusState,
     irq_handler_state: IrqHandlerState,
     dma_in_progress: bool,
-    disc_path:Option<PathBuf>,
+    disc_state: Option<DiscState>,
 }
 
 impl SnapshotAware for Emulator {
     type State = EmulatorState;
 
     fn snapshot(&self) -> EmulatorState {
-        let disc_path = self.cdrom.borrow().get_disc().map(|disc| PathBuf::from(disc.get_original_cue_file_name().clone()));
+        let disc_state = self.cdrom.borrow().get_disc().map(|disc| disc.snapshot());
         EmulatorState {
             emu_version: self.config.emu_version.clone(),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
@@ -138,15 +139,16 @@ impl SnapshotAware for Emulator {
             bus_state: self.bus.snapshot(),
             irq_handler_state: self.irq_handler.snapshot(),
             dma_in_progress: self.dma_in_progress,
-            disc_path,
+            disc_state,
         }
     }
 
     fn restore(&mut self, state: EmulatorState) {
         let dt = chrono::DateTime::from_timestamp_millis( state.timestamp as i64).unwrap();
         info!("Restoring emulator state from {} with version {}", dt.format("%d/%m/%Y %H:%M:%S"), state.emu_version);
-        match state.disc_path.as_ref() {
-            Some(disc_path) => {
+        match state.disc_state {
+            Some(disc_state) => {
+                let disc_path = PathBuf::from(disc_state.original_cue_file_name.clone());
                 if disc_path.exists() {
                     // restoring state
                     self.irq_handler.restore(state.irq_handler_state);
@@ -156,7 +158,8 @@ impl SnapshotAware for Emulator {
                     self.perf.reset();
 
                     info!("Loading disc {} from snapshot ...", disc_path.to_string_lossy());
-                    self.load_disc(&disc_path.to_string_lossy().to_string(), true);
+                    self.load_disc(&disc_path.to_string_lossy().to_string(), true,true);
+                    self.cdrom.borrow_mut().restore_disc_state_from_snapshot(disc_state);
                 } else {
                     warn!("Disc path '{}' from snapshot does not exist, skipping snapshot", disc_path.to_string_lossy());
                 }
@@ -292,7 +295,7 @@ impl Emulator {
         }
     }
 
-    fn load_disc(&mut self,disc_path:&String,allow_exe:bool) {
+    fn load_disc(&mut self,disc_path:&String,allow_exe:bool,is_from_snapshot:bool) {
         // check if the disc path exists
         if !Path::new(&disc_path).exists() {
             error!("Disc path '{}' does not exist",disc_path);
@@ -348,7 +351,12 @@ impl Emulator {
                     self.gpu.borrow_mut().set_video_mode(video_mode);
 
                     let real_disc_name = disc.get_cue_file_name().clone();
-                    self.cdrom.borrow_mut().insert_disk(disc);
+                    if !is_from_snapshot {
+                        self.cdrom.borrow_mut().insert_disk(disc);
+                    }
+                    else {
+                        self.cdrom.borrow_mut().restore_disc_from_snapshot(disc);
+                    }
                     let disc_name = PathBuf::from(real_disc_name);
                     let name = Path::new(&disc_name)
                         .file_stem()
@@ -399,7 +407,7 @@ impl Emulator {
         self.gpu.borrow_mut().get_renderer_mut().set_splash_screen();
 
         if let Some(disc_path) = self.config.disc_path.clone() {
-            self.load_disc(&disc_path,true);
+            self.load_disc(&disc_path,true,false);
         }
 
         self.just_entered_in_step_mode = false;
@@ -565,7 +573,7 @@ impl Emulator {
                     self.shutting_down = true;
                 }
                 GUIEvent::InsertDisc(disc_path) => {
-                    self.load_disc(&disc_path.to_string_lossy().to_string(),false);
+                    self.load_disc(&disc_path.to_string_lossy().to_string(),false,false);
                 }
                 GUIEvent::Cheat => {
                     self.cheats_on ^= true;
