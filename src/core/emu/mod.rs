@@ -146,22 +146,33 @@ impl SnapshotAware for Emulator {
     fn restore(&mut self, state: EmulatorState) {
         let dt = chrono::DateTime::from_timestamp_millis( state.timestamp as i64).unwrap();
         info!("Restoring emulator state from {} with version {}", dt.format("%d/%m/%Y %H:%M:%S"), state.emu_version);
+        match state.disc_state.as_ref() {
+            Some(disc_state) => {
+                let disc_path = PathBuf::from(disc_state.original_cue_file_name.clone());
+                if !disc_path.exists() {
+                    warn!("Disc path '{}' from snapshot does not exist, skipping snapshot", disc_path.to_string_lossy());
+                    self.gpu.borrow_mut().get_renderer_mut().message(format!("Disc path '{}' from snapshot does not exist, skipping snapshot", disc_path.to_string_lossy()).as_str(), 4, true);
+                    return;
+                }
+            }
+            None => {}
+        }
+        // restoring state
+        self.irq_handler.restore(state.irq_handler_state);
+        self.dma_in_progress = state.dma_in_progress;
+        self.cpu.restore(state.cpu_state);
+        self.bus.restore(state.bus_state);
+        self.perf.reset();
+
+        self.gpu.borrow_mut().get_renderer_mut().message(format!("Restored snapshot from slot {} - {} {}",self.snapshot_manager.get_slot(),state.emu_version,dt.format("%d/%m/%Y %H:%M:%S")).as_str(), 4, false);
+
         match state.disc_state {
             Some(disc_state) => {
                 let disc_path = PathBuf::from(disc_state.original_cue_file_name.clone());
                 if disc_path.exists() {
-                    // restoring state
-                    self.irq_handler.restore(state.irq_handler_state);
-                    self.dma_in_progress = state.dma_in_progress;
-                    self.cpu.restore(state.cpu_state);
-                    self.bus.restore(state.bus_state);
-                    self.perf.reset();
-
                     info!("Loading disc {} from snapshot ...", disc_path.to_string_lossy());
                     self.load_disc(&disc_path.to_string_lossy().to_string(), true,true);
                     self.cdrom.borrow_mut().restore_disc_state_from_snapshot(disc_state);
-                } else {
-                    warn!("Disc path '{}' from snapshot does not exist, skipping snapshot", disc_path.to_string_lossy());
                 }
             }
             None => {}
@@ -406,10 +417,6 @@ impl Emulator {
         thread::sleep(Duration::from_millis(2000));
         self.gpu.borrow_mut().get_renderer_mut().set_splash_screen();
 
-        if let Some(disc_path) = self.config.disc_path.clone() {
-            self.load_disc(&disc_path,true,false);
-        }
-
         self.just_entered_in_step_mode = false;
         self.run_mode = RunMode::FreeMode;
 
@@ -422,6 +429,15 @@ impl Emulator {
         self.bus.get_clock_mut().schedule_audio_sample();
 
         let debugger_enabled = self.config.debugger_enabled;
+
+        // load disc or snapshot
+        if let Some(disc_path) = self.config.disc_path.clone() {
+            self.load_disc(&disc_path,true,false);
+        }
+        else if let Some(slot) = self.config.load_slot && slot < 10 {
+            self.snapshot_manager.set_slot(slot as u8);
+            self.load_snapshot();
+        }
 
         'main_loop: while !self.shutting_down {
             if self.just_entered_in_step_mode {
@@ -753,12 +769,12 @@ impl Emulator {
     }
 
     fn save_snapshot(&mut self) {
-        self.gpu.borrow_mut().get_renderer_mut().message(format!("Saving snapshot to slot {}",self.snapshot_manager.get_slot()).as_str(), 1, false);
+        self.gpu.borrow_mut().get_renderer_mut().message(format!("Saving snapshot to slot {}",self.snapshot_manager.get_slot()).as_str(), 2, false);
         match self.snapshot_manager.save_state(self) {
             Ok(_) => {},
             Err(e) => {
                 error!("Failed to save snapshot: {}", e);
-                self.gpu.borrow_mut().get_renderer_mut().message(format!("Error while saving snapshot to slot {}",self.snapshot_manager.get_slot()).as_str(), 2, true);
+                self.gpu.borrow_mut().get_renderer_mut().message(format!("Error while saving snapshot to slot {}",self.snapshot_manager.get_slot()).as_str(), 4, true);
             }
         }
     }
@@ -771,7 +787,7 @@ impl Emulator {
             }
             Err(e) => {
                 error!("Failed to load snapshot: {}", e);
-                self.gpu.borrow_mut().get_renderer_mut().message(format!("Error while loading snapshot from slot {}",self.snapshot_manager.get_slot()).as_str(), 2, true);
+                self.gpu.borrow_mut().get_renderer_mut().message(format!("Error while loading snapshot from slot {}",self.snapshot_manager.get_slot()).as_str(), 4, true);
             }
         }
     }

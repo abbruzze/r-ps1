@@ -39,6 +39,9 @@ struct Args {
     /// Full screen enabled
     #[arg(long)]
     full_screen: bool,
+    /// Load snapshot's slot
+    #[arg(long, value_name = "SLOT")]
+    load_slot: Option<usize>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -142,6 +145,10 @@ fn main() {
             Ok(_) => println!("Config file saved to '{}'",config_file.display()),
             Err(e) => println!("Error saving config file: {}",e),
         }
+    }
+    
+    if let Some(slot) = args.load_slot {
+        config.load_slot = Some(slot);
     }
     
     config.emu_home = Some(emu_dir.to_path_buf());

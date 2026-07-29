@@ -823,11 +823,11 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                                 let _ = self.gui_event_tx.send(GUIEvent::Reset(self.key_modifiers.shift_key()));
                                 return;
                             }
-                            KeyCode::KeyS if self.key_modifiers.alt_key() => {
+                            KeyCode::Insert => {
                                 let _ = self.gui_event_tx.send(GUIEvent::SnapshotSaveRequest);
                                 return;
                             }
-                            KeyCode::KeyL if self.key_modifiers.alt_key() => {
+                            KeyCode::Backspace => {
                                 let _ = self.gui_event_tx.send(GUIEvent::SnapshotLoadRequest);
                                 return;
                             }

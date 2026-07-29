@@ -485,6 +485,7 @@ pub struct Config {
     pub emu_home: Option<PathBuf>,
     #[serde(skip)]
     pub file_config: Option<PathBuf>,
+    pub load_slot: Option<usize>,
     pub disc_path: Option<String>,
     pub bios_path: Option<String>,
     pub region_policy: RegionPolicyConfig,
