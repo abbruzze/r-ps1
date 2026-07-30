@@ -32,7 +32,7 @@ impl SnapshotManager {
     }
 
     pub fn set_slot(&mut self,slot:u8) {
-        if slot > 9 {
+        if slot < 10 {
             self.slot = slot;
             info!("Snapshot slot set to {}", slot);
         }
