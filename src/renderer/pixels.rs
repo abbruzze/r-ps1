@@ -724,7 +724,7 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                 self.audio_muted = on;
             }
             PS1Event::Message(msg, duration_sec, is_error) => {
-                self.add_message(msg, if is_error { [255, 255, 0, 0] } else { [255, 255, 255, 255] }, duration_sec * 60);
+                self.add_message(msg, if is_error { [255, 0, 0, 255] } else { [255, 255, 255, 255] }, duration_sec * 60);
             }
         }
     }
