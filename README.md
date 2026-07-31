@@ -34,6 +34,7 @@ My first Rust development after years of Scala and OO projects, it was not a sim
 - USB Controller support
 - Memory Cards
 - Basic debugging (via CLI) support
+- Save states
 
 ## Bios
 The emulator needs a BIOS image to run.
@@ -255,6 +256,9 @@ F10|Full screen mode (to exit from full screen mode use F10 or ESC key)
 Space|Pause the emulation
 Alt+F5|Reset the emulator
 Shift+Alt+F5|Hard reset the emulator (will clear the memory as well)
+Alt+0..9|Select save state slot (0..9)
+Insert or Alt+S|Save current state to disk in the selected slot
+Backspace or Alt+L|Load state from disk from the selected slot
 
 ## Memory card
 The supported memory card format is **mcd** (128K binary format).
@@ -283,6 +287,11 @@ Below a list of the available commands:
 | `break <add\|remove> w <hex_addr>` | Add/remove a write breakpoint at the address                                                 |
 | `break <add\|remove> o <hex_opcode>` | Add/remove a breakpoint on a specific opcode                                                 |
 
+## Save states
+During the game, you can save and load your progress using save states. Save states allow you to pause the game, save your current state to disk, and later load it back to continue playing from where you left off.
+The states will be saved on disk under the `snapshot` directory of the current working directory.
+The save states are numbered from 0 to 9, and you can select a slot using the `Alt+0..9` shortcut. To save the current state to disk in the selected slot, press `Insert` or `Alt+S`. To load state from disk from the selected slot, press `Backspace` or `Alt+L`.
+The saved state will not contain the content of the CD-ROM attached to the emulator: when you load a saved state, the emulator will search for the CD-ROM again, in its original directory.
 
 ## Gallery
 <div align="center">
