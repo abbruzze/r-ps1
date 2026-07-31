@@ -7,7 +7,7 @@
   <img src="images/r-ps1_logo.png" alt="r-ps1 logo" width="614">
 </div>
 
-# R-PS1 ver 0.9.5
+# R-PS1 ver 0.9.6
 Rust Playstation 1 emulator
 
 My first Rust development after years of Scala and OO projects, it was not a simple task but gave me a new perspective about software programming.
@@ -109,6 +109,9 @@ Options:
 
       --full-screen
           Full screen enabled
+          
+      --load-slot <SLOT>
+          Load snapshot's slot
 
   -h, --help
           Print help (see a summary with '-h')
