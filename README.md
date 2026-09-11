@@ -205,6 +205,12 @@ cheats_config:
     - 80007628 0008
     - 8000762A 03E0
 ```
+## Key mappings
+In the `controller_keymap` section of the yaml config file you can map the host keys to the controller buttons.
+The controller key names are self explanatory: cross, circle, etc.
+The host key names are mapped to winit keycodes: please refer to the [config](https://github.com/abbruzze/r-ps1/blob/main/src/core/config/mod.rs) Rust file.
+
+In the key mapping it's possible to specify a modifier using `<ps1 button>: <mod key>+<host key>`, for example `l1: Alt+KeyA`.
 
 ## Supported disc format
 You can attach a [cue](https://en.wikipedia.org/wiki/Cue_sheet_(computing)) file or a zip file containing a cue file and all its bin references.

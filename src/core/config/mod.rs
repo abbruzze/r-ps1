@@ -5,8 +5,52 @@ use std::path::PathBuf;
 use tracing::error;
 use winit::keyboard::KeyCode;
 
-pub fn parse_keycode(s: &str) -> Option<KeyCode> {
-    match s {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum HostKeyModifier {
+    Shift,
+    Control,
+    Alt,
+}
+
+impl HostKeyModifier {
+    pub fn from_string(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "shift" => Some(HostKeyModifier::Shift),
+            "control" | "ctrl" => Some(HostKeyModifier::Control),
+            "alt" => Some(HostKeyModifier::Alt),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub struct HostKey {
+    pub key_code: KeyCode,
+    pub modifier: Option<HostKeyModifier>,
+}
+
+impl HostKey {
+    pub fn new(key_code: KeyCode, modifier: Option<HostKeyModifier>) -> Self {
+        Self {
+            key_code,
+            modifier,
+        }
+    }
+}
+
+pub fn parse_keycode(s: &str) -> Option<HostKey> {
+    let mut modifier : Option<&str> = None;
+    let mut key = s;
+
+    if let Some((modifier_s, key_s)) = s.split_once('+') {
+        modifier = Some(modifier_s);
+        key = key_s;
+    }
+    else {
+        key = s;
+    }
+
+    let key_code = match key {
         // Lettere
         "KeyA" | "A" => Some(KeyCode::KeyA),
         "KeyB" | "B" => Some(KeyCode::KeyB),
@@ -82,8 +126,12 @@ pub fn parse_keycode(s: &str) -> Option<KeyCode> {
         "F11" => Some(KeyCode::F11),
         "F12" => Some(KeyCode::F12),
 
-        _ => None,
-    }
+        _ => {
+            return None;
+        },
+    };
+
+    Some(HostKey::new(key_code?,modifier.and_then(|s| HostKeyModifier::from_string(s))))
 }
 
 pub fn keycode_to_string(keycode: KeyCode) -> String {
@@ -250,7 +298,7 @@ impl KeyMapping {
 #[serde(into = "KeyMapping")]
 pub struct ControllerKeyMapping {
     pub key_mapping: KeyMapping,
-    pub key_map: HashMap<KeyCode, ControllerButton>,
+    pub key_map: HashMap<HostKey, ControllerButton>,
 }
 
 impl<'de> serde::Deserialize<'de> for ControllerKeyMapping {
@@ -274,8 +322,8 @@ impl ControllerKeyMapping {
         Self::from_config(KeyMapping::default_controller2())
     }
 
-    pub fn map_key(&self, key: KeyCode) -> Option<ControllerButton> {
-        self.key_map.get(&key).copied()
+    pub fn map_key(&self, key: &HostKey) -> Option<ControllerButton> {
+        self.key_map.get(key).copied()
     }
 
     pub fn from_config(config: KeyMapping) -> Self {

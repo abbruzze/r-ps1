@@ -1,7 +1,7 @@
 use super::{CDOperation, GUIEvent, MouseAccumulator};
 use super::{EmuStarter, GPUFrameBuffer, PS1Event, Renderer};
 use crate::core::cdrom::Region;
-use crate::core::config::{Config, ControllerType};
+use crate::core::config::{Config, ControllerType, HostKey, HostKeyModifier};
 use crate::core::controllers::ControllerButton;
 use crate::core::emu::EMU_NAME;
 use crate::core::emu::EMU_VERSION;
@@ -304,7 +304,6 @@ struct PixelsRenderer {
     fps_frames: u32,
     gui_event_tx: mpsc::Sender<GUIEvent>,
     config: Config,
-    last_key: bool,
     warp_mode: bool,
     audio_muted:bool,
     paused: bool,
@@ -322,6 +321,7 @@ struct PixelsRenderer {
     iconified: bool,
     full_screen: bool,
     key_modifiers : ModifiersState,
+    last_pressed_modified_keycode: Option<HostKey>,
     text_renderer: TextRenderer,
     mouse_acc: Arc<MouseAccumulator>,
     mouse_enabled: bool,
@@ -342,7 +342,6 @@ impl PixelsRenderer {
             fps_frames: 0,
             gui_event_tx,
             config,
-            last_key: false,
             warp_mode: false,
             audio_muted: false,
             paused: false,
@@ -360,6 +359,7 @@ impl PixelsRenderer {
             iconified: false,
             full_screen: false,
             key_modifiers: ModifiersState::default(),
+            last_pressed_modified_keycode: None,
             text_renderer: TextRenderer::new(),
             mouse_acc: mouse_acc.clone(),
             mouse_enabled: false,
@@ -781,10 +781,14 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                 self.key_modifiers = new_modifiers.state();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                self.last_key = event.state.is_pressed();
+                let last_key_pressed = event.state.is_pressed();
                 if let PhysicalKey::Code(keycode) = event.physical_key {
+                    // ignore modifiers only
+                    if keycode == KeyCode::AltLeft || keycode == KeyCode::AltRight || keycode == KeyCode::ShiftLeft || keycode == KeyCode::ShiftRight || keycode == KeyCode::ControlLeft || keycode == KeyCode::ControlRight {
+                        return;
+                    }
                     // check user commands
-                    if !self.last_key {
+                    if !last_key_pressed {
                         match keycode {
                             KeyCode::F1 => { // check warp mode
                                 let _ = self.gui_event_tx.send(GUIEvent::WarpMode);
@@ -855,11 +859,35 @@ impl ApplicationHandler<PS1Event> for PixelsRenderer {
                         }
                     }
 
-                    if let Some(map_key) = self.config.controllers.controller_1.controller_keymap.as_ref() && let Some(button) = map_key.map_key(keycode) {
-                        let _ = self.gui_event_tx.send(GUIEvent::Controller(0, button, self.last_key));
+                    // check modifiers
+
+                    let modifier = if self.key_modifiers.alt_key() {
+                        Some(HostKeyModifier::Alt)
+                    } else if self.key_modifiers.shift_key() {
+                        Some(HostKeyModifier::Shift)
+                    } else if self.key_modifiers.control_key() {
+                        Some(HostKeyModifier::Control)
+                    } else { None };
+
+                    let mut hostkey = HostKey::new(keycode, modifier);
+
+                    if last_key_pressed && modifier.is_some() {
+                        self.last_pressed_modified_keycode = Some(hostkey);
                     }
-                    else if let Some(map_key) = self.config.controllers.controller_2.controller_keymap.as_ref() && let Some(button) = map_key.map_key(keycode) {
-                        let _ = self.gui_event_tx.send(GUIEvent::Controller(1, button, self.last_key));
+                    else if last_key_pressed && let Some(mod_key) = self.last_pressed_modified_keycode && mod_key.key_code == keycode {
+                        // we have released the modifier key but not the primary button, ignore it
+                        return;
+                    }
+                    else if !last_key_pressed && let Some(mod_key) = self.last_pressed_modified_keycode && mod_key.key_code == keycode {
+                        self.last_pressed_modified_keycode = None;
+                        hostkey = mod_key;
+                    }
+
+                    if let Some(map_key) = self.config.controllers.controller_1.controller_keymap.as_ref() && let Some(button) = map_key.map_key(&hostkey) {
+                        let _ = self.gui_event_tx.send(GUIEvent::Controller(0, button, last_key_pressed));
+                    }
+                    else if let Some(map_key) = self.config.controllers.controller_2.controller_keymap.as_ref() && let Some(button) = map_key.map_key(&hostkey) {
+                        let _ = self.gui_event_tx.send(GUIEvent::Controller(1, button, last_key_pressed));
                     }
                 }
             }
